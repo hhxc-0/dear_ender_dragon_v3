@@ -1,0 +1,44 @@
+repo/
+  README.md                       # Run commands + what “gold baseline” means + where logs/checkpoints go
+  pyproject.toml                  # Deps + formatting/lint config (or requirements.txt)
+
+  configs/
+    ppo_cartpole.yaml             # Phase 0 gold config (CartPole)
+    ppo_lunarlander.yaml          # Phase 0 second gold config (LunarLander)
+
+  scripts/
+    train.py                      # Only training entrypoint (loads config, wires pieces, runs loop)
+    eval.py                       # Loads checkpoint, runs fixed-episode eval (+ optional video)
+
+  src/
+    __init__.py                   # Package marker
+
+    types.py                      # Small dataclasses for Batch/Rollout + Metrics dict typing (optional but helpful)
+
+    algo/
+      __init__.py                 # Exports PPO learner
+      ppo.py                      # PPO loss + update step (clip obj, value loss, entropy, KL, logging)
+
+    buffers/
+      __init__.py                 # Exports RolloutBuffer
+      rollout_buffer.py           # Store rollout + compute GAE/returns with correct terminated/truncated handling
+
+    models/
+      __init__.py                 # Exports ActorCritic
+      mlp_actor_critic.py         # MLP actor-critic for CartPole/LunarLander (Categorical actions)
+
+    envs/
+      __init__.py                 # Exports make_env
+      make_env.py                 # Create env, seed reset(), optionally record stats/video in eval
+
+    utils/
+      __init__.py                 # Utility exports
+      seed.py                     # Set python/numpy/torch/env seeds + deterministic toggles
+      checkpoint.py               # Save/load model+optimizer(+optional RNG) and resume training
+      logging.py                  # TensorBoard logger + config dump + run dir creation
+      assertions.py               # NaN/inf checks + shape asserts used in train/update
+
+    tests/
+      __init__.py                 # Test package marker
+      test_gae.py                 # GAE/returns correctness + shape + bootstrapping sanity
+      test_done_trunc.py          # terminated vs truncated handling (time-limit bootstrapping) unit test

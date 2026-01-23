@@ -1,0 +1,90 @@
+repo/
+  README.md                          # How to run train/eval, reproduce baselines, and where results are stored
+  pyproject.toml                     # Dependencies, formatting/linting tool config (or requirements.txt/setup.cfg)
+  .gitignore                         # Ignore runs/, checkpoints/, __pycache__/ etc.
+
+  configs/
+    ppo_cartpole.yaml                # Gold baseline PPO config for CartPole (Phase 0)
+    ppo_lunarlander.yaml             # Gold baseline PPO config for LunarLander (Phase 0)
+    ppo_pixels_minigrid.yaml         # Pixel PPO config scaffold (Phase 1)
+    ppo_lstm_minigrid_memory.yaml    # Recurrent PPO config scaffold (Phase 2)
+    ppo_rnd.yaml                     # PPO+RND config scaffold (Phase 3)
+    ppo_transformer.yaml             # PPO+Transformer config scaffold (Phase 4)
+    ppo_transformer_xl.yaml          # PPO+Transformer-XL config scaffold (Phase 5)
+    impala_vtrace.yaml               # IMPALA/V-trace config scaffold (future)
+    ppg.yaml                         # PPG config scaffold (future)
+
+  scripts/
+    train.py                         # Main entrypoint: loads config, builds components, runs training loop
+    eval.py                          # Loads checkpoint and runs fixed-episode evaluation (+ optional video)
+    sweep_seeds.py                   # Convenience runner to launch N seeds for the same config
+    plot_runs.py                     # Quick utility to plot key metrics from multiple runs
+
+  src/
+    __init__.py                      # Package marker
+
+    types.py                         # Dataclasses/typed dicts for Batch/Unroll, EnvStep, TrainMetrics
+
+    algo/
+      __init__.py                    # Algorithm registry/exports
+      base.py                        # Learner interface: update(batch)->metrics, save/load hooks
+      ppo.py                         # PPO loss + update step (clipping, KL, entropy, value loss)
+      ppg.py                         # PPG wrapper: PPO phase + auxiliary distillation/value phase (future)
+      vtrace.py                      # V-trace math utilities (importance weights, targets, advantages)
+      impala.py                      # IMPALA learner using V-trace + unroll batching (future)
+
+    runners/
+      __init__.py                    # Runner exports
+      base.py                        # Runner interface: collect()->Batch/Unroll, reset(), stats()
+      onpolicy_runner.py             # Synchronous rollout collection for PPO/PPG (vector env friendly)
+      impala_actor.py                # Actor process logic to generate unrolls w/ behavior policy (future)
+      impala_learner_loop.py         # Learner loop that consumes unroll queue and updates model (future)
+
+    buffers/
+      __init__.py                    # Buffer exports
+      rollout_buffer.py              # PPO rollout storage + GAE/returns + flatten minibatch iterator
+      seq_buffer.py                  # Sequence/chunk minibatching w/ padding + masks (RNN/Transformer)
+      unroll_buffer.py               # IMPALA unroll storage + slicing to fixed unroll length (future)
+
+    models/
+      __init__.py                    # Model exports/factory
+      base.py                        # Policy model interface: initial_state(), forward(), dist/value API
+      mlp_actor_critic.py            # Feedforward actor-critic for classic control (Phase 0)
+      cnn_encoders.py                # Nature/IMPALA-style CNN encoders for pixels (Phase 1+)
+      lstm_actor_critic.py           # CNN/MLP + LSTM actor-critic with state reset on done (Phase 2)
+      transformer_policy.py          # Fixed-window causal Transformer policy/value (Phase 4)
+      transformer_xl_policy.py       # Transformer-XL with memory cache + episode boundary resets (Phase 5)
+      distributions.py               # Action distribution helpers (Categorical/DiagGaussian, logp/entropy)
+
+    envs/
+      __init__.py                    # Env helpers exports
+      make_env.py                    # Creates Gymnasium env + applies wrappers + seeding
+      vec_env.py                     # Sync vector env builder utilities / compatibility layer
+      wrappers.py                    # Common wrappers (clip reward, frame stack, time-limit info passthrough)
+      preprocess.py                  # Pixel preprocessing (resize/crop/normalize/grayscale) (Phase 1)
+
+    intrinsic/
+      __init__.py                    # Intrinsic motivation exports
+      rnd.py                         # RND target/predictor nets + intrinsic reward computation (Phase 3)
+      running_norm.py                # Running mean/std normalizer for rewards/features (used by RND etc.)
+
+    optim/
+      __init__.py                    # Optimizer/scheduler exports
+      schedulers.py                  # LR/beta schedules (linear decay, cosine, piecewise)
+      utils.py                       # Gradient clipping, param grouping, mixed precision helpers (optional)
+
+    utils/
+      __init__.py                    # Utility exports
+      seed.py                        # Global seeding + determinism toggles
+      checkpoint.py                  # Save/load model/optim/config + RNG states + resume support
+      logging.py                     # TensorBoard/W&B logger wrapper + metric aggregation
+      timers.py                      # FPS/throughput timers + moving averages
+      assertions.py                  # NaN/inf checks, shape checks, mask/done invariants
+
+    tests/
+      __init__.py                    # Test package marker
+      test_gae.py                    # Unit tests for GAE/returns shapes + bootstrapping sanity
+      test_adv_norm.py               # Unit tests for advantage normalization correctness
+      test_done_trunc.py             # Tests for terminated vs truncated handling (time-limit bootstrapping)
+      test_rnn_masking.py            # Tests for hidden-state reset and padding masks (Phase 2)
+      test_transformer_masks.py      # Tests for causal/padding masks correctness (Phase 4/5)
