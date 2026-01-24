@@ -8,60 +8,31 @@ Keep this file as orchestration/wiring; put math-heavy code in src/*.
 
 from __future__ import annotations
 
-import argparse
 import os
 from pathlib import Path
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from typing import Any, Dict, Optional
+import tensorboard
 
 import numpy as np
 import torch
+
+from src.envs.make_env import make_env
+from src.utils.logging import make_logger
+from src.utils.seed import seed_all
 
 
 # ----------------------------
 # CLI + config
 # ----------------------------
-def parse_args() -> argparse.Namespace:
-    p = argparse.ArgumentParser()
-    p.add_argument("--config", type=str, required=True)          # path to yaml
-    p.add_argument("--seed", type=int, default=None)            # override config seed
-    p.add_argument("--device", type=str, default=None)          # cpu/cuda override
-    p.add_argument("--resume", type=str, default=None)          # checkpoint path
-    return p.parse_args()
-
-
-def load_config(path: str) -> Dict[str, Any]:
-    # load yaml into a dict
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(p)
-    suffix = p.suffix.lower()
-    if suffix in [".yaml", ".yml"]:
-        with p.open("r", encoding="utf-8") as f:
-            cfg = yaml.safe_load(f)
-    else:
-        raise ValueError(f"Unsupported config extension: {suffix} (use .yaml/.yml)")
-    if cfg is None:
-        cfg = {}
-    if not isinstance(cfg, dict):
-        raise TypeError(f"Config must be a mapping/dict, got {type(cfg)}")
-    return cfg
-
-
-def save_config(cfg: Dict[str, Any], out_path: str) -> None:
-    # save a dict into yaml
-    p = Path(out_path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("w", encoding="utf-8") as f:
-        yaml.safe_dump(cfg, f, sort_keys=False)
-
-
-def select_device(cfg: Dict[str, Any], cli_device: Optional[str]) -> torch.device:
+def select_device(requested: str) -> torch.device:
     # choose device based on cfg + availability + cli override
-    requested = (cli_device or cfg.get("device", "auto")).lower()
+    requested = requested.lower()
+
     def mps_available() -> bool:
         return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+
     if requested == "auto":
         if torch.cuda.is_available():
             return torch.device("cuda")
@@ -80,10 +51,6 @@ def select_device(cfg: Dict[str, Any], cli_device: Optional[str]) -> torch.devic
 # ----------------------------
 # Small helpers (keep minimal)
 # ----------------------------
-def make_run_name(cfg: Dict[str, Any]) -> str:
-    return f"{cfg.get("run")}{env}__{algo}{variant}__{obs}__{arch}__lr{lr}_g{gamma}_bs{bs}__steps{steps}__seed{seed}__{tag}"
-
-
 def maybe_log_episode_info(logger, global_step: int, info: Dict[str, Any]) -> None:
     # TODO: if using RecordEpisodeStatistics, log episodic return/len when present
     pass
@@ -104,29 +71,26 @@ def policy_step(model, obs_np: np.ndarray, device: torch.device):
 # ----------------------------
 # Main
 # ----------------------------
-@hydra.main(version_base=None, config_path="configs", config_name="config")
+@hydra.main(
+    version_base=None, config_path="../configs", config_name="ppo_cartpole.yaml"
+)
 def main(cfg: DictConfig) -> None:
-    args = parse_args()
-
-    # --- apply CLI overrides ---
-    # TODO: override cfg["seed"] etc. if provided
-    # TODO: pick device
-    device = select_device(cfg, args.device)
+    device = select_device(cfg.device)
 
     # --- setup run dir + logger ---
-    # TODO: create run_dir, dump resolved config, init TensorBoard/W&B logger
-    run_name = make_run_name(cfg)
-    run_dir = os.path.join(cfg.get("runs_dir", "runs"), run_name)
-    os.makedirs(run_dir, exist_ok=True)
-    # logger = ...
+    # Hydra changes working dir into outputs/... by default
+    run_dir = os.getcwd()
+    # optional: save resolved config
+    with open(os.path.join(run_dir, "config_resolved.yaml"), "w") as f:
+        f.write(OmegaConf.to_yaml(cfg))
+    device = select_device(cfg.device)
+    logger = make_logger(cfg.logging.backend, run_dir)
 
     # --- seeding / determinism ---
-    # TODO: set python/numpy/torch seeds
-    # TODO: optional best-effort determinism toggles
+    seed_all(cfg.seed, cfg.run.deterministic)
 
     # --- create env ---
-    # TODO: env = make_env(env_id=..., seed=..., render_mode=None)
-    env = None
+    env = make_env(cfg.env.id, cfg.rollout.n_envs, cfg.seed)
 
     # --- build model + optimizer ---
     # TODO: model = ActorCritic(obs_space, act_space, model_cfg).to(device)

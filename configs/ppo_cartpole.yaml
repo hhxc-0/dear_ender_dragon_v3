@@ -1,13 +1,13 @@
 # Phase 0 gold config (CartPole)
 run:
-  name: "ppo_cartpole"
-  runs_dir: "runs"
+  name: ppo_cartpole
+  runs_dir: runs
   notes: ""
   deterministic: false
-seed: 1
-device: "auto"          # "auto" | "cpu" | "cuda"
+seed: 42
+device: auto          # "auto" | "cpu" | "cuda"
 env:
-  id: "CartPole-v1"
+  id: CartPole-v1
   capture_video: false  # training-time video (usually false in Phase 0)
   # render_mode is typically set by train/eval script
 train:
@@ -21,7 +21,7 @@ rollout:
   n_steps: 1024                  # steps per update (T)
 model:
   hidden_sizes: [64, 64]
-  activation: "tanh"             # "tanh" or "relu"
+  activation: tanh             # "tanh" or "relu"
 optim:
   lr: 3.0e-4
   eps: 1.0e-5
@@ -37,7 +37,7 @@ ppo:
   # Optional early-stop by KL (can leave null/omit in Phase 0)
   target_kl: null
 logging:
-  tensorboard: true
+  backend: tensorboard   # None (NoOpLogger) | tensorboard | wandb | mlflow
   log_grad_norm: true
   log_adv_stats: true
   log_fps: true
