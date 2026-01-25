@@ -17,10 +17,12 @@ import tensorboard
 
 import numpy as np
 import torch
+from gymnasium import spaces
 
 from src.envs.make_env import make_env
 from src.utils.logging import make_logger
 from src.utils.seed import seed_all
+from src.models.mlp_actor_critic import MLPActorCritic
 
 
 # ----------------------------
@@ -90,13 +92,22 @@ def main(cfg: DictConfig) -> None:
     seed_all(cfg.seed, cfg.run.deterministic)
 
     # --- create env ---
-    env = make_env(cfg.env.id, cfg.rollout.n_envs, cfg.seed)
+    envs = make_env(cfg.env.id, cfg.rollout.n_envs, cfg.seed)
 
     # --- build model + optimizer ---
-    # TODO: model = ActorCritic(obs_space, act_space, model_cfg).to(device)
-    # TODO: optimizer = Adam(model.parameters(), lr=...)
-    model = None
-    optimizer = None
+    assert isinstance(envs.single_observation_space, spaces.Box)
+    assert isinstance(envs.single_action_space, spaces.Discrete)
+    assert len(envs.single_observation_space.shape) == 1
+    assert isinstance(envs.single_action_space.n, int)
+    model = MLPActorCritic(
+        envs.single_observation_space.shape[0],
+        envs.single_action_space.n,
+        hidden_sizes=cfg.model.hidden_sizes,
+        activation=cfg.model.activation,
+        shared_backbone=cfg.model.shared_backbone,
+        orthogonal_init=cfg.model.orthogonal_init,
+    ).to(device)
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr, eps=cfg.optim.eps)
 
     # --- resume (optional) ---
     # TODO: if args.resume: load model/optim + counters (+ RNG state optionally)

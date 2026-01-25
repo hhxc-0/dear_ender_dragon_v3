@@ -22,6 +22,8 @@ rollout:
 model:
   hidden_sizes: [64, 64]
   activation: tanh             # "tanh" or "relu"
+  shared_backbone: True
+  orthogonal_init: True
 optim:
   lr: 3.0e-4
   eps: 1.0e-5
