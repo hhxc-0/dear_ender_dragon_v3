@@ -1,0 +1,1 @@
+python -m scripts.train --config-name ppo_cartpole.yaml

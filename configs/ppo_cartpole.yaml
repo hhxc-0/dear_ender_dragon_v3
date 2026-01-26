@@ -20,6 +20,7 @@ rollout:
   n_envs: 1                      # start with 1 in Phase 0
   n_steps: 1024                  # steps per update (T)
 model:
+  name: mlp_actor_critic       # mlp_actor_critic | cnn_actor_critic ...
   hidden_sizes: [64, 64]
   activation: tanh             # "tanh" or "relu"
   shared_backbone: True

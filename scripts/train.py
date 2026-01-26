@@ -22,7 +22,8 @@ from gymnasium import spaces
 from src.envs.make_env import make_env
 from src.utils.logging import make_logger
 from src.utils.seed import seed_all
-from src.models.mlp_actor_critic import MLPActorCritic
+from src.models.base import make_model
+from src.buffers.rollout_buffer import RolloutBuffer
 
 
 # ----------------------------
@@ -95,33 +96,20 @@ def main(cfg: DictConfig) -> None:
     envs = make_env(cfg.env.id, cfg.rollout.n_envs, cfg.seed)
 
     # --- build model + optimizer ---
-    assert isinstance(envs.single_observation_space, spaces.Box)
-    assert isinstance(envs.single_action_space, spaces.Discrete)
-    assert len(envs.single_observation_space.shape) == 1
-    assert isinstance(envs.single_action_space.n, int)
-    model = MLPActorCritic(
-        envs.single_observation_space.shape[0],
-        envs.single_action_space.n,
-        hidden_sizes=cfg.model.hidden_sizes,
-        activation=cfg.model.activation,
-        shared_backbone=cfg.model.shared_backbone,
-        orthogonal_init=cfg.model.orthogonal_init,
-    ).to(device)
+    model = make_model(cfg.model, envs.single_observation_space, envs.single_action_space).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr, eps=cfg.optim.eps)
-
+    
     # --- resume (optional) ---
     # TODO: if args.resume: load model/optim + counters (+ RNG state optionally)
     global_step = 0
     update_idx = 0
 
     # --- rollout buffer ---
-    # TODO: buf = RolloutBuffer(n_steps=..., obs_space=..., act_space=..., device=..., cfg=...)
-    buf = None
+    assert isinstance(envs.single_observation_space, spaces.Box)
+    buf = RolloutBuffer(cfg.rollout.n_steps, cfg.rollout.n_envs, envs.single_observation_space.shape)
 
     # --- reset env ---
-    # TODO: obs, info = env.reset(seed=cfg["seed"])
-    obs = None
-    info = None
+    obs, info = envs.reset(seed=cfg.seed)
 
     # ----------------------------
     # Training loop (by updates)
