@@ -17,7 +17,7 @@ train:
   eval_every_updates: 50         # optional (or leave to separate eval script)
   eval_episodes: 20              # optional
 rollout:
-  n_envs: 1                      # start with 1 in Phase 0
+  n_envs: 2                      # start with 1 in Phase 0
   n_steps: 1024                  # steps per update (T)
 model:
   name: mlp_actor_critic       # mlp_actor_critic | cnn_actor_critic ...

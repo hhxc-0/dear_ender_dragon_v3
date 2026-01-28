@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Union
 import tensorboard
 
 import numpy as np
@@ -20,9 +20,9 @@ import torch
 from gymnasium import spaces
 
 from src.envs.make_env import make_env
-from src.utils.logging import make_logger
+from src.utils.logging import make_logger, Logger
 from src.utils.seed import seed_all
-from src.models.base import make_model
+from src.models.factory import make_model
 from src.buffers.rollout_buffer import RolloutBuffer
 
 
@@ -54,9 +54,25 @@ def select_device(requested: str) -> torch.device:
 # ----------------------------
 # Small helpers (keep minimal)
 # ----------------------------
-def maybe_log_episode_info(logger, global_step: int, info: Dict[str, Any]) -> None:
-    # TODO: if using RecordEpisodeStatistics, log episodic return/len when present
-    pass
+def log_episode_info(logger: Logger, global_step: int, info: Dict[str, Any]) -> None:
+    # log episodic return/len when present
+    if "episode" not in info or "_episode" not in info: return
+    idx = np.flatnonzero(info["_episode"])
+    if idx.size == 0: return
+    rets = info["episode"]["r"][idx].astype(np.float32)
+    lens = info["episode"]["l"][idx].astype(np.int32)
+    print(f"got episodic return: {float(rets.mean())} at global step: {global_step}")
+    logger.log_scalar("episodic_return_mean", float(rets.mean()), global_step)
+    logger.log_scalar("episodic_length_mean", float(lens.mean()), global_step)
+
+
+def to_torch(
+    x: Any, device: Union[str, torch.device], dtype: Optional[torch.dtype] = None
+) -> torch.Tensor:
+    # torch.as_tensor avoids an extra copy on CPU when possible;
+    # specifying device will move/copy to GPU if needed.
+    t = torch.as_tensor(x, device=device)
+    return t if dtype is None else t.to(dtype)
 
 
 @torch.no_grad()
@@ -78,8 +94,6 @@ def policy_step(model, obs_np: np.ndarray, device: torch.device):
     version_base=None, config_path="../configs", config_name="ppo_cartpole.yaml"
 )
 def main(cfg: DictConfig) -> None:
-    device = select_device(cfg.device)
-
     # --- setup run dir + logger ---
     # Hydra changes working dir into outputs/... by default
     run_dir = os.getcwd()
@@ -89,16 +103,22 @@ def main(cfg: DictConfig) -> None:
     device = select_device(cfg.device)
     logger = make_logger(cfg.logging.backend, run_dir)
 
+    # --- aliasing frequently used configs ---
+    T = cfg.rollout.n_steps
+    N = cfg.rollout.n_envs
+
     # --- seeding / determinism ---
     seed_all(cfg.seed, cfg.run.deterministic)
 
     # --- create env ---
-    envs = make_env(cfg.env.id, cfg.rollout.n_envs, cfg.seed)
+    envs = make_env(cfg.env.id, N, cfg.seed)
 
     # --- build model + optimizer ---
-    model = make_model(cfg.model, envs.single_observation_space, envs.single_action_space).to(device)
+    model = make_model(
+        cfg.model, envs.single_observation_space, envs.single_action_space
+    ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr, eps=cfg.optim.eps)
-    
+
     # --- resume (optional) ---
     # TODO: if args.resume: load model/optim + counters (+ RNG state optionally)
     global_step = 0
@@ -106,47 +126,72 @@ def main(cfg: DictConfig) -> None:
 
     # --- rollout buffer ---
     assert isinstance(envs.single_observation_space, spaces.Box)
-    buf = RolloutBuffer(cfg.rollout.n_steps, cfg.rollout.n_envs, envs.single_observation_space.shape)
+    buf = RolloutBuffer(T, N, envs.single_observation_space.shape)
 
     # --- reset env ---
-    obs, info = envs.reset(seed=cfg.seed)
+    obs_np, info = envs.reset(seed=cfg.seed)
+    episode_start = torch.tensor([True] * N, dtype=torch.bool, device=device)
 
     # ----------------------------
     # Training loop (by updates)
     # ----------------------------
-    # TODO: define total_env_steps, n_steps, logging cadence, checkpoint cadence
-    total_env_steps = cfg["train"]["total_env_steps"]
-    n_steps = cfg["rollout"]["n_steps"]
+    total_env_steps = cfg.train.total_env_steps
+    logging_cadence = None
+    checkpoint_cadence = None
 
     while global_step < total_env_steps:
         # --- collect rollout ---
-        # TODO: buf.reset()
-        for t in range(n_steps):
-            # 1) get action/logp/value from policy
-            # action, logp, value = policy_step(model, obs, device)
+        buf.reset()
+        for t in range(T):
+            with torch.no_grad():
+                # 1) get action/logp/value from policy
+                obs = to_torch(obs_np, device=device, dtype=torch.float32)
+                action, logp, value, next_state = model.forward(obs)
 
-            # 2) step env
-            # next_obs, reward, terminated, truncated, info = env.step(action)
+                # 2) step env
+                next_obs_np, reward_np, terminated_np, truncated_np, info = envs.step(
+                    action.detach().cpu().numpy()
+                )
+                reward = to_torch(reward_np, device=device, dtype=torch.float32)
+                terminated = to_torch(terminated_np, device=device, dtype=torch.bool)
+                truncated = to_torch(truncated_np, device=device, dtype=torch.bool)
+                timeout = torch.zeros(
+                    N, dtype=torch.bool, device=device
+                )  # TODO: get timeout flags
+                done = terminated | truncated
 
             # 3) store transition in buffer
-            # buf.add(obs, action, reward, terminated, truncated, logp, value)
+            buf.add(
+                obs,
+                action,
+                logp,
+                value,
+                reward,
+                terminated,
+                truncated,
+                done,
+                timeout,
+                episode_start,
+            )
 
             # 4) update counters + episodic logging
-            # global_step += 1 (or += n_envs)
-            # maybe_log_episode_info(logger, global_step, info)
+            global_step += N
+            log_episode_info(logger, global_step, info)
 
-            # 5) handle episode end (for single env, call reset)
-            # if terminated or truncated: next_obs, info = env.reset()
+            # 5) handle episode end
 
             # 6) advance obs
-            # obs = next_obs
-            pass
+            obs_np = next_obs_np
+
+            # 7) set episode_start
+            episode_start = done
 
         # --- bootstrap value for final obs ---
         # TODO: last_value = model.value(obs)
         last_value = None
 
         # --- compute advantages/returns ---
+        assert buf.t == T  # rollout buffer is full
         # TODO: buf.compute_returns_and_advantages(last_value, gamma, gae_lambda)
         # TODO: log advantage mean/std
 

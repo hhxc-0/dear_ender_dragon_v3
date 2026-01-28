@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Tuple, Optional, Any, Callable
+from typing import Tuple, Optional, Any, Callable, Sequence
 import math
 import torch
 from torch import nn
@@ -10,6 +10,8 @@ from torch.distributions import Categorical
 import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
+
+from .base import ActorCritic
 
 
 def make_mlp(
@@ -58,26 +60,28 @@ def activation_factory(activation: str) -> Callable[[], nn.Module]:
     raise ValueError(f"Unknown activation: {activation}")
 
 
-class MLPActorCritic(nn.Module):
+class MLPActorCritic(ActorCritic):
     def __init__(
         self,
         single_obs_space: spaces.Space,
         single_act_space: spaces.Space,
         *,
         debug: bool = False,
-        hidden_sizes: tuple[int, ...] = (64, 64),
+        hidden_sizes: Sequence[int] = (64, 64),
         activation: str = "tanh",  # "tanh" (SB3-style) or "relu"
         shared_backbone: bool = True,  # shared trunk vs separate pi/v networks
         orthogonal_init: bool = True,  # common in PPO
         # log_std_init: float = -0.5,  # only used if you later add continuous actions
-    ):
+    ) -> None:
         super().__init__()
         assert isinstance(single_obs_space, spaces.Box)
         assert isinstance(single_act_space, spaces.Discrete)
         assert len(single_obs_space.shape) == 1
-        assert isinstance(single_act_space.n, (int, np.integer)), f"Expect int for number of actions, got {type(single_act_space.n)}"
+        assert isinstance(
+            single_act_space.n, (int, np.integer)
+        ), f"Expect int for number of actions, got {type(single_act_space.n)}"
         self.obs_dim = single_obs_space.shape[0]
-        self.act_dim = single_act_space.n
+        self.act_dim = int(single_act_space.n)
         self.debug = debug
         self.shared_backbone = shared_backbone
 
@@ -114,11 +118,11 @@ class MLPActorCritic(nn.Module):
     def initial_state(self, batch_size: int, device: torch.device) -> Optional[Any]:
         return None
 
-    def act(
+    def forward(
         self,
         obs: torch.Tensor,  # [batch, obs_dim]
-        state: Optional[Any],  # unused
-        done: Optional[torch.Tensor] = None,  # unused
+        # state: Optional[Any],  # unused
+        # done: Optional[torch.Tensor] = None,  # unused
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[Any]]:
         """Returns (action, logp, value, next_state)."""
         # arguments checking and pre-processing
@@ -151,9 +155,13 @@ class MLPActorCritic(nn.Module):
         logp = action_dist.log_prob(action)
         value = value.squeeze(-1)  # [batch,1] -> [batch]
         return action, logp, value, None
-    
+
     def evaluate_actions(
-        self, obs: torch.Tensor, action: torch.Tensor
+        self,
+        obs: torch.Tensor,
+        action: torch.Tensor,
+        state: Optional[Any],
+        done: Optional[torch.Tensor],
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Returns (logp, entropy, value)."""
         # arguments checking and pre-processing
