@@ -1,9 +1,10 @@
 # Phase 0 gold config (CartPole)
 run:
   name: ppo_cartpole
-  runs_dir: runs
+  run_dir: ${hydra:runtime.output_dir}
   notes: ""
   deterministic: false
+debug: False
 seed: 42
 device: auto          # "auto" | "cpu" | "cuda"
 env:
@@ -25,6 +26,7 @@ model:
   activation: tanh             # "tanh" or "relu"
   shared_backbone: True
   orthogonal_init: True
+  debug: False
 optim:
   lr: 3.0e-4
   eps: 1.0e-5

@@ -16,4 +16,4 @@ def make_env(id: str, n_envs: int = 1, seed: int = 42):
             return env
         return thunk
 
-    return gym.vector.SyncVectorEnv([make_thunk(i) for i in range(n_envs)])
+    return gym.vector.SyncVectorEnv([make_thunk(i) for i in range(n_envs)], autoreset_mode=gym.vector.AutoresetMode.SAME_STEP)
