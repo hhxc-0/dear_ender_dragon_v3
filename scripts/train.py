@@ -215,7 +215,6 @@ def main(cfg: DictConfig) -> None:
             episode_start = done
 
         # --- bootstrap value for final obs ---
-        # TODO: last_value = model.value(obs)
         with torch.no_grad():
             last_obs = to_torch(obs_np, device=device, dtype=torch.float32)
             _, _, last_value, _ = model.forward(last_obs)
@@ -226,11 +225,46 @@ def main(cfg: DictConfig) -> None:
         if debug:
             assert buf.t == T  # make sure rollout buffer is full
         buf.compute_returns_and_advantages(
-            gamma=cfg.ppo.gamma, gae_lambda=cfg.ppo.gae_lambda
+            gamma=cfg.ppo.gamma,
+            gae_lambda=cfg.ppo.gae_lambda,
+            normalize_advantages=cfg.ppo.normalize_advantages,
+            eps=cfg.ppo.eps,
         )
-        # TODO: log advantage mean/std
+        # log advantage mean/std
+        with torch.no_grad():
+            # raw
+            assert isinstance(buf.advantages, torch.Tensor)
+            adv_raw_flatten = buf.advantages.reshape(-1)
+            assert torch.isfinite(adv_raw_flatten).all()
+            logger.log_scalar(
+                name="adv_mean_raw",
+                value=adv_raw_flatten.mean().item(),
+                step=global_step,
+            )
+            logger.log_scalar(
+                name="adv_std_raw",
+                value=adv_raw_flatten.std(unbiased=False).item(),
+                step=global_step,
+            )
+            # normalized (should be ~0/~1 when enabled)
+            assert isinstance(buf.advantages_norm, torch.Tensor)
+            adv_norm_flatten = buf.advantages_norm.reshape(-1)
+            assert torch.isfinite(adv_norm_flatten).all()
+            logger.log_scalar(
+                name="adv_mean_norm",
+                value=adv_norm_flatten.mean().item(),
+                step=global_step,
+            )
+            logger.log_scalar(
+                name="adv_std_norm",
+                value=adv_norm_flatten.std(unbiased=False).item(),
+                step=global_step,
+            )
 
         # --- PPO update (multiple epochs/minibatches) ---
+        for epoch in range(cfg.ppo.update_epochs):
+            for mini_batch in buf.iter_minibatches(cfg.ppo.minibatch_size, shuffle=True):
+                pass
         # for epoch in range(update_epochs):
         #   for batch in buf.iter_minibatches(minibatch_size, shuffle=True):
         #       metrics = ppo_update(model, optimizer, batch, ...)

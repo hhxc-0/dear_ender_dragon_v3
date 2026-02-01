@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence, Literal
+from typing import Sequence, Literal, NamedTuple
+import torch
+from torch import Tensor
+
 
 @dataclass
 class ModelCfg:
@@ -12,3 +15,12 @@ class ModelCfg:
     activation: str
     shared_backbone: bool
     orthogonal_init: bool
+
+
+class MiniBatch(NamedTuple):
+    obs: Tensor
+    actions: Tensor
+    logp_old: Tensor
+    values_old: Tensor
+    returns: Tensor
+    advantages_norm: Tensor
