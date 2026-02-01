@@ -118,7 +118,7 @@ class MLPActorCritic(ActorCritic):
     def initial_state(self, batch_size: int, device: torch.device) -> Optional[Any]:
         return None
 
-    def forward(
+    def get_action_and_value(
         self,
         obs: torch.Tensor,  # [batch, obs_dim]
         # state: Optional[Any],  # unused
@@ -156,12 +156,43 @@ class MLPActorCritic(ActorCritic):
         value = value.squeeze(-1)  # [batch,1] -> [batch]
         return action, logp, value, None
 
+    def get_value(
+        self,
+        obs: torch.Tensor,  # [batch, obs_dim]
+        # state: Optional[Any],  # unused
+        # done: Optional[torch.Tensor] = None,  # unused
+    ) -> torch.Tensor:
+        """Returns value."""
+        # arguments checking and pre-processing
+        if self.debug:
+            assert (
+                obs.ndim == 2
+            ), f"Expected obs [B, obs_dim], got shape {tuple(obs.shape)}"
+            assert (
+                obs.shape[1] == self.obs_dim
+            ), f"Expected obs_dim={self.obs_dim}, got {obs.shape[1]}"
+        obs = obs.to(torch.float32)
+
+        # inference
+        if self.shared_backbone:
+            hidden = self.trunk_mlp(obs)
+            value = self.v_head(hidden)
+        else:
+            v_hidden = self.v_mlp(obs)
+            value = self.v_head(v_hidden)
+        if self.debug:
+            assert torch.isfinite(value).all()
+
+        # post-processing
+        value = value.squeeze(-1)  # [batch,1] -> [batch]
+        return value
+
     def evaluate_actions(
         self,
         obs: torch.Tensor,
         action: torch.Tensor,
-        state: Optional[Any],
-        done: Optional[torch.Tensor],
+        # state: Optional[Any],  # unused
+        # done: Optional[torch.Tensor],  # unused
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Returns (logp, entropy, value)."""
         # arguments checking and pre-processing

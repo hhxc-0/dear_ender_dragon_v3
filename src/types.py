@@ -17,7 +17,16 @@ class ModelCfg:
     orthogonal_init: bool
 
 
+@dataclass
+class PPOCfg:
+    clip_coef: float
+    ent_coef: float
+    vf_coef: float
+    max_grad_norm: float
+
+
 class MiniBatch(NamedTuple):
+    batch_size: int
     obs: Tensor
     actions: Tensor
     logp_old: Tensor

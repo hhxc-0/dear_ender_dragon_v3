@@ -10,6 +10,7 @@ device: auto          # "auto" | "cpu" | "cuda"
 env:
   id: CartPole-v1
   capture_video: false  # training-time video (usually false in Phase 0)
+  human_render: true
   # render_mode is typically set by train/eval script
 train:
   total_env_steps: 200000
@@ -40,7 +41,7 @@ ppo:
   clip_coef: 0.2
   ent_coef: 0.0
   vf_coef: 0.5
-  max_grad_norm: 0.5
+  max_grad_norm: 0.5     # float or None (disable clipping)
   # Optional early-stop by KL (can leave null/omit in Phase 0)
   target_kl: null
 logging:

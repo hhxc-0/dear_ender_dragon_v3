@@ -140,8 +140,8 @@ class RolloutBuffer:
             self.advantages_norm = self.advantages
 
     def iter_minibatches(
-        self, mini_batch_size: int, shuffle: bool
-    ) -> Generator[tuple[Tensor, Tensor, Tensor, Tensor, Tensor, Tensor]]:
+        self, mini_batch_size: int, shuffle: bool, device: Union[str, torch.device]
+    ) -> Generator[MiniBatch]:
         """Yields MiniBatch"""
 
         # Flatten [T, B] -> [N]
@@ -177,10 +177,11 @@ class RolloutBuffer:
             end = start + mini_batch_size
             mb_inds = b_inds[start:end]
             yield MiniBatch(
-                obs=b_obs[mb_inds],
-                actions=b_actions[mb_inds],
-                logp_old=b_logp_old[mb_inds],
-                values_old=b_values_old[mb_inds],
-                returns=b_returns[mb_inds],
-                advantages_norm=b_adv_norm[mb_inds],
+                batch_size=len(mb_inds),
+                obs=b_obs[mb_inds].to(device),
+                actions=b_actions[mb_inds].to(device),
+                logp_old=b_logp_old[mb_inds].to(device),
+                values_old=b_values_old[mb_inds].to(device),
+                returns=b_returns[mb_inds].to(device),
+                advantages_norm=b_adv_norm[mb_inds].to(device),
             )
