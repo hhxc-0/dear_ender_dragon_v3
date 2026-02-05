@@ -1,0 +1,13 @@
+name: ppo
+gamma: 0.99
+gae_lambda: 0.95
+eps: 1.0e-8
+normalize_advantages: True
+update_epochs: 10
+minibatch_size: 256
+clip_coef: 0.2
+ent_coef: 0.0
+vf_coef: 0.5
+max_grad_norm: 0.5 # float or null (disable clipping)
+# Optional early-stop by KL (can leave null/omit in Phase 0)
+target_kl: null

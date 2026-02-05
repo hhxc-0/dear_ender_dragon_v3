@@ -1,0 +1,4 @@
+backend: tensorboard # null (NoOpLogger) | tensorboard | wandb | mlflow
+log_grad_norm: true
+log_adv_stats: true
+log_fps: true

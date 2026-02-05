@@ -1,0 +1,15 @@
+defaults:
+  - /experiment: cartpole_gold
+  - /logging: default
+debug: False
+seed: 42
+device: auto # "auto" | "cpu" | "cuda"
+run:
+  name: ppo_cartpole
+  run_dir: ${hydra:runtime.output_dir}
+  notes: ""
+  deterministic: false
+runtime:
+  resume:
+    mode: null # "null" | "resume" | "init_from"
+    path: null # path to resuming checkpoint

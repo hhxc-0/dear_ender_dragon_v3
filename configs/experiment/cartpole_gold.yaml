@@ -1,0 +1,17 @@
+# @package _global_
+# Phase 0 gold config (CartPole)
+defaults:
+  - /env: cartpole_default
+  - /algo: ppo_gold
+  - /model: mlp_actor_critic_gold
+  - /optim: adam_gold
+  - _self_
+train:
+  total_env_steps: 200000
+rollout:
+  n_envs: 2 # start with 1 in Phase 0
+  n_steps: 1024 # steps per update (T)
+checkpoint:
+  save_every_steps: 10000 # int or null (no saves)
+  final_save: true # save at the end
+  save_rng_state: false # turn on later if you want stricter reproducibility

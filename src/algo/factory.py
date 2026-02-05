@@ -10,6 +10,6 @@ from .ppo import PPOLearner
 
 
 def make_learner(cfg: DictConfig, model: ActorCritic, optim: torch.optim.Optimizer) -> Learner:
-    if cfg.ppo is not None:
-        return PPOLearner(model=model, optim=optim, config=cfg.ppo)
-    raise ValueError("Learner not found in config.")
+    if cfg.algo.name == "ppo":
+        return PPOLearner(model=model, optim=optim, config=cfg.algo)
+    raise ValueError("Unknown learner.")

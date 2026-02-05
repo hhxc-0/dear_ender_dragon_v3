@@ -1,0 +1,6 @@
+name: mlp_actor_critic # mlp_actor_critic | cnn_actor_critic ...
+hidden_sizes: [64, 64]
+activation: tanh # "tanh" or "relu"
+shared_backbone: True
+orthogonal_init: True
+debug: False

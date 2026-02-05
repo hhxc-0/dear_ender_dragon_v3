@@ -58,7 +58,9 @@ def select_device(requested: str) -> torch.device:
 # ----------------------------
 # Small helpers (keep minimal)
 # ----------------------------
-def log_episode_info(logger: Logger, global_step: int, info: Dict[str, Any], print_return: bool) -> None:
+def log_episode_info(
+    logger: Logger, global_step: int, info: Dict[str, Any], print_return: bool
+) -> None:
     # log episodic return/len when present
     if (
         "final_info" not in info
@@ -72,7 +74,9 @@ def log_episode_info(logger: Logger, global_step: int, info: Dict[str, Any], pri
     rets = info["final_info"]["episode"]["r"][idx].astype(np.float32)
     lens = info["final_info"]["episode"]["l"][idx].astype(np.int32)
     if print_return:
-        print(f"got episodic return: {float(rets.mean()):#.5g} at global step: {global_step}")
+        print(
+            f"got episodic return: {float(rets.mean()):#.5g} at global step: {global_step}"
+        )
     logger.log_scalar("episodic_return_mean", float(rets.mean()), global_step)
     logger.log_scalar("episodic_length_mean", float(lens.mean()), global_step)
 
@@ -147,9 +151,7 @@ def policy_step(model, obs_np: np.ndarray, device: torch.device):
 # ----------------------------
 # Main
 # ----------------------------
-@hydra.main(
-    version_base=None, config_path="../configs", config_name="ppo_cartpole_template.yaml"
-)
+@hydra.main(version_base=None, config_path="../configs", config_name="train.yaml")
 def main(cfg: DictConfig) -> None:
     # --- setup run dir + logger ---
     # Hydra changes working dir into outputs/... by default
@@ -182,17 +184,22 @@ def main(cfg: DictConfig) -> None:
     model = make_model(
         cfg.model, envs.single_observation_space, envs.single_action_space
     ).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.optim.lr, eps=cfg.optim.eps)
+    if cfg.optim.name == "adam":
+        optimizer = torch.optim.Adam(
+            model.parameters(), lr=cfg.optim.lr, eps=cfg.optim.eps
+        )
+    else:
+        raise NotImplementedError("Unknown optimizer")
     learner = make_learner(cfg=cfg, model=model, optim=optimizer)
 
     # --- resume (optional) ---
     # TODO: if args.resume: load model/optim + counters (+ RNG state optionally)
-    if OmegaConf.select(cfg, "resume"):
-        pass
-    # else:
-    global_step = 0
-    update_idx = 0
-    next_checkpoint_step = cfg.checkpoint.save_per_steps
+    if cfg.runtime.resume.mode is not None:
+        raise NotImplementedError
+    else:
+        global_step = 0
+        update_idx = 0
+        next_checkpoint_step = cfg.checkpoint.save_every_steps
 
     # --- rollout buffer ---
     assert isinstance(envs.single_observation_space, spaces.Box)
@@ -273,7 +280,12 @@ def main(cfg: DictConfig) -> None:
                 # 4) update counters + episodic logging
                 global_step += N
                 # TODO: log terminated_frac, truncated_frac (counts / total transitions)
-                log_episode_info(logger=logger, global_step=global_step, info=info, print_return=False)
+                log_episode_info(
+                    logger=logger,
+                    global_step=global_step,
+                    info=info,
+                    print_return=False,
+                )
 
                 # 5) handle episode end
 
@@ -293,10 +305,10 @@ def main(cfg: DictConfig) -> None:
             if debug:
                 assert buf.t == T  # make sure rollout buffer is full
             buf.compute_returns_and_advantages(
-                gamma=cfg.ppo.gamma,
-                gae_lambda=cfg.ppo.gae_lambda,
-                normalize_advantages=cfg.ppo.normalize_advantages,
-                eps=cfg.ppo.eps,
+                gamma=cfg.algo.gamma,
+                gae_lambda=cfg.algo.gae_lambda,
+                normalize_advantages=cfg.algo.normalize_advantages,
+                eps=cfg.algo.eps,
             )
             # log advantage mean/std
             log_advantage_mean_std(logger=logger, buf=buf, global_step=global_step)
@@ -310,11 +322,11 @@ def main(cfg: DictConfig) -> None:
         metrics_weighted_sum = defaultdict(float)
         metrics_count = 0
         early_stop = False
-        for epoch in range(cfg.ppo.update_epochs):
+        for epoch in range(cfg.algo.update_epochs):
             kl_sum = 0
             kl_count = 0
             for mini_batch in buf.iter_minibatches(
-                cfg.ppo.minibatch_size, shuffle=True, device=device
+                cfg.algo.minibatch_size, shuffle=True, device=device
             ):
                 single_update_metrics = learner.update(mini_batch=mini_batch)
                 # accumulate metrics
@@ -324,7 +336,7 @@ def main(cfg: DictConfig) -> None:
                 kl_sum += single_update_metrics["approx_kl"]
                 kl_count += 1
             # early-stop by KL
-            if cfg.ppo.target_kl is not None and kl_count / kl_sum > cfg.ppo.target_kl:
+            if cfg.algo.target_kl is not None and kl_count / kl_sum > cfg.algo.target_kl:
                 early_stop = True
                 break
         # weighted mean
@@ -354,7 +366,7 @@ def main(cfg: DictConfig) -> None:
 
         # --- checkpoint ---
         # periodically save model/optim/counters (+ RNG state optionally)
-        if cfg.checkpoint.save_per_steps and global_step >= next_checkpoint_step:
+        if cfg.checkpoint.save_every_steps and global_step >= next_checkpoint_step:
             save_checkpoint(
                 run_dir=run_dir,
                 cfg=cfg,
@@ -364,7 +376,7 @@ def main(cfg: DictConfig) -> None:
                 update_idx=update_idx,
                 save_rng=cfg.checkpoint.save_rng_state,
             )
-            next_checkpoint_step += cfg.checkpoint.save_per_steps
+            next_checkpoint_step += cfg.checkpoint.save_every_steps
 
     # --- final save + cleanup ---
     if cfg.checkpoint.final_save:
