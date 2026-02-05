@@ -66,7 +66,7 @@ class PPOLearner:
             metrics["entropy"] = to_scalar(entropy_mean)
             metrics["total_loss"] = to_scalar(loss)
             # PPO health
-            metrics["approx_kl"] = to_scalar((logp - mini_batch.logp_old).mean())
+            metrics["approx_kl"] = to_scalar((mini_batch.logp_old - logp).mean())
             metrics["clipfrac"] = to_scalar(
                 ((ratio - 1.0).abs() > self.clip_coef).float().mean()
             )

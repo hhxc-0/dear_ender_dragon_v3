@@ -4,6 +4,7 @@ run:
   run_dir: ${hydra:runtime.output_dir}
   notes: ""
   deterministic: false
+resume: False
 debug: False
 seed: 42
 device: auto          # "auto" | "cpu" | "cuda"
@@ -41,14 +42,15 @@ ppo:
   clip_coef: 0.2
   ent_coef: 0.0
   vf_coef: 0.5
-  max_grad_norm: 0.5     # float or None (disable clipping)
+  max_grad_norm: 0.5     # float or null (disable clipping)
   # Optional early-stop by KL (can leave null/omit in Phase 0)
   target_kl: null
 logging:
-  backend: tensorboard   # None (NoOpLogger) | tensorboard | wandb | mlflow
+  backend: tensorboard   # null (NoOpLogger) | tensorboard | wandb | mlflow
   log_grad_norm: true
   log_adv_stats: true
   log_fps: true
 checkpoint:
-  save_optimizer: true
+  save_per_steps: 10000   # int or null (no saves)
+  final_save: true       # save at the end
   save_rng_state: false          # turn on later if you want stricter reproducibility

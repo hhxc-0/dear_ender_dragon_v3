@@ -8,6 +8,7 @@ Keep this file as orchestration/wiring; put math-heavy code in src/*.
 
 from __future__ import annotations
 
+import time
 import os
 from pathlib import Path
 import hydra
@@ -23,6 +24,7 @@ from gymnasium import spaces
 from src.envs.make_env import make_env
 from src.utils.logging import make_logger, Logger
 from src.utils.seed import seed_all
+from src.utils.checkpoint import save_checkpoint, load_last_checkpoint
 from src.models.factory import make_model
 from src.buffers.rollout_buffer import RolloutBuffer
 from src.algo.factory import make_learner
@@ -56,16 +58,21 @@ def select_device(requested: str) -> torch.device:
 # ----------------------------
 # Small helpers (keep minimal)
 # ----------------------------
-def log_episode_info(logger: Logger, global_step: int, info: Dict[str, Any]) -> None:
+def log_episode_info(logger: Logger, global_step: int, info: Dict[str, Any], print_return: bool) -> None:
     # log episodic return/len when present
-    if "episode" not in info or "_episode" not in info:
+    if (
+        "final_info" not in info
+        or "episode" not in info["final_info"]
+        or "_episode" not in info["final_info"]
+    ):
         return
-    idx = np.flatnonzero(info["_episode"])
+    idx = np.flatnonzero(info["final_info"]["_episode"])
     if idx.size == 0:
         return
-    rets = info["episode"]["r"][idx].astype(np.float32)
-    lens = info["episode"]["l"][idx].astype(np.int32)
-    print(f"got episodic return: {float(rets.mean())} at global step: {global_step}")
+    rets = info["final_info"]["episode"]["r"][idx].astype(np.float32)
+    lens = info["final_info"]["episode"]["l"][idx].astype(np.int32)
+    if print_return:
+        print(f"got episodic return: {float(rets.mean()):#.5g} at global step: {global_step}")
     logger.log_scalar("episodic_return_mean", float(rets.mean()), global_step)
     logger.log_scalar("episodic_length_mean", float(lens.mean()), global_step)
 
@@ -88,11 +95,32 @@ def log_advantage_mean_std(
         logger.log_scalar("adv_std_norm", adv_n.std(unbiased=False).item(), global_step)
 
 
-def log_update_metrics(logger: Logger, global_step:int,  metrics: dict, early_stop: bool) -> None:
+def log_sps(
+    logger: Logger,
+    global_step: int,
+    starting_step: int,
+    starting_time: float,
+    rollout_time: float,
+    ending_time: float,
+    print_sps: bool,
+) -> None:
+    delta_step = global_step - starting_step
+    rollout_delta_time = rollout_time - starting_time
+    total_delta_time = ending_time - starting_time
+    logger.log_scalar("sps_env", delta_step / rollout_delta_time, global_step)
+    logger.log_scalar("sps_total", delta_step / total_delta_time, global_step)
+    logger.log_scalar("rollout_sec", rollout_delta_time, global_step)
+    logger.log_scalar("update_sec", ending_time - rollout_time, global_step)
+    if print_sps:
+        print(f"SPS: {delta_step / rollout_delta_time}")
+
+
+def log_update_metrics(
+    logger: Logger, global_step: int, metrics: dict, early_stop: bool
+) -> None:
     logger.log_scalar("early_stop", int(early_stop), global_step)
     for k, v in metrics.items():
         logger.log_scalar(k, v, global_step)
-
 
 
 def to_torch(
@@ -120,7 +148,7 @@ def policy_step(model, obs_np: np.ndarray, device: torch.device):
 # Main
 # ----------------------------
 @hydra.main(
-    version_base=None, config_path="../configs", config_name="ppo_cartpole.yaml"
+    version_base=None, config_path="../configs", config_name="ppo_cartpole_template.yaml"
 )
 def main(cfg: DictConfig) -> None:
     # --- setup run dir + logger ---
@@ -141,7 +169,14 @@ def main(cfg: DictConfig) -> None:
     seed_all(cfg.seed, cfg.run.deterministic)
 
     # --- create env ---
-    envs = make_env(id=cfg.env.id, n_envs=N, seed=cfg.seed, capture_video=cfg.env.capture_video, video_folder=run_dir / "videos", human_render=cfg.env.human_render)
+    envs = make_env(
+        id=cfg.env.id,
+        n_envs=N,
+        seed=cfg.seed,
+        capture_video=cfg.env.capture_video,
+        video_folder=run_dir / "videos",
+        human_render=cfg.env.human_render,
+    )
 
     # --- build model + optimizer + learner ---
     model = make_model(
@@ -152,8 +187,12 @@ def main(cfg: DictConfig) -> None:
 
     # --- resume (optional) ---
     # TODO: if args.resume: load model/optim + counters (+ RNG state optionally)
+    if OmegaConf.select(cfg, "resume"):
+        pass
+    # else:
     global_step = 0
     update_idx = 0
+    next_checkpoint_step = cfg.checkpoint.save_per_steps
 
     # --- rollout buffer ---
     assert isinstance(envs.single_observation_space, spaces.Box)
@@ -173,10 +212,14 @@ def main(cfg: DictConfig) -> None:
     # Training loop (by updates)
     # ----------------------------
     total_env_steps = cfg.train.total_env_steps
-    logging_cadence = None
-    checkpoint_cadence = None
 
     while global_step < total_env_steps:
+        # --- reset SPS counters ---
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        starting_step = global_step
+        starting_time = time.perf_counter()
+
         # --- collect rollout ---
         with torch.no_grad():
             buf.reset()
@@ -230,7 +273,7 @@ def main(cfg: DictConfig) -> None:
                 # 4) update counters + episodic logging
                 global_step += N
                 # TODO: log terminated_frac, truncated_frac (counts / total transitions)
-                log_episode_info(logger=logger, global_step=global_step, info=info)
+                log_episode_info(logger=logger, global_step=global_step, info=info, print_return=False)
 
                 # 5) handle episode end
 
@@ -258,6 +301,11 @@ def main(cfg: DictConfig) -> None:
             # log advantage mean/std
             log_advantage_mean_std(logger=logger, buf=buf, global_step=global_step)
 
+        # --- log timer ---
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        rollout_time = time.perf_counter()
+
         # --- PPO update (multiple epochs/minibatches) ---
         metrics_weighted_sum = defaultdict(float)
         metrics_count = 0
@@ -268,33 +316,67 @@ def main(cfg: DictConfig) -> None:
             for mini_batch in buf.iter_minibatches(
                 cfg.ppo.minibatch_size, shuffle=True, device=device
             ):
-                metrics = learner.update(mini_batch=mini_batch)
+                single_update_metrics = learner.update(mini_batch=mini_batch)
                 # accumulate metrics
-                for k, v in metrics.items():
+                for k, v in single_update_metrics.items():
                     metrics_weighted_sum[k] += v * float(mini_batch.batch_size)
                 metrics_count += mini_batch.batch_size
-                kl_sum += metrics["approx_kl"]
+                kl_sum += single_update_metrics["approx_kl"]
                 kl_count += 1
             # early-stop by KL
             if cfg.ppo.target_kl is not None and kl_count / kl_sum > cfg.ppo.target_kl:
                 early_stop = True
                 break
+        # weighted mean
         metrics_weighted_mean = {
             k: v / metrics_count for k, v in metrics_weighted_sum.items()
         }
         update_idx += 1
 
         # --- log update metrics ---
-        log_update_metrics(logger=logger, global_step=global_step, metrics=metrics_weighted_mean, early_stop=early_stop)
-        # TODO: fps
+        if device.type == "cuda":
+            torch.cuda.synchronize()
+        log_sps(
+            logger=logger,
+            global_step=global_step,
+            starting_step=starting_step,
+            starting_time=starting_time,
+            rollout_time=rollout_time,
+            ending_time=time.perf_counter(),
+            print_sps=True,
+        )
+        log_update_metrics(
+            logger=logger,
+            global_step=global_step,
+            metrics=metrics_weighted_mean,
+            early_stop=early_stop,
+        )
 
         # --- checkpoint ---
-        # TODO: periodically save model/optim/counters (+ RNG state optionally)
-
-        pass
+        # periodically save model/optim/counters (+ RNG state optionally)
+        if cfg.checkpoint.save_per_steps and global_step >= next_checkpoint_step:
+            save_checkpoint(
+                run_dir=run_dir,
+                cfg=cfg,
+                model=model,
+                optimizer=optimizer,
+                global_step=global_step,
+                update_idx=update_idx,
+                save_rng=cfg.checkpoint.save_rng_state,
+            )
+            next_checkpoint_step += cfg.checkpoint.save_per_steps
 
     # --- final save + cleanup ---
-    # TODO: save final checkpoint
+    if cfg.checkpoint.final_save:
+        save_checkpoint(
+            run_dir=run_dir,
+            cfg=cfg,
+            model=model,
+            optimizer=optimizer,
+            global_step=global_step,
+            update_idx=update_idx,
+            save_rng=cfg.checkpoint.save_rng_state,
+        )
 
     # close env, close logger
     envs.close()

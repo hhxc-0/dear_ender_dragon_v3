@@ -10,7 +10,7 @@
             "request": "launch",
             "console": "integratedTerminal",
             "module": "scripts.train",
-            "args": "--config-name ppo_cartpole.yaml",
+            "args": "--config-name ppo_cartpole_tuned.yaml",
         }
     ]
 }
