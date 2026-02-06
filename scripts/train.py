@@ -1,8 +1,7 @@
 # Only training entrypoint (loads config, wires pieces, runs loop)
 """
-Phase 0 PPO training entrypoint (structure-only template).
+Phase 0 PPO training entrypoint.
 
-Fill in the TODO blocks with your implementation.
 Keep this file as orchestration/wiring; put math-heavy code in src/*.
 """
 
@@ -24,7 +23,12 @@ from gymnasium import spaces
 from src.envs.make_env import make_env
 from src.utils.logging import make_logger, Logger
 from src.utils.seed import seed_all
-from src.utils.checkpoint import save_checkpoint, load_last_checkpoint
+from src.utils.checkpoint import (
+    save_checkpoint,
+    load_checkpoint,
+    resume_from_checkpoint,
+    init_from_checkpoint,
+)
 from src.models.factory import make_model
 from src.buffers.rollout_buffer import RolloutBuffer
 from src.algo.factory import make_learner
@@ -136,18 +140,6 @@ def to_torch(
     return t if dtype is None else t.to(dtype)
 
 
-@torch.no_grad()
-def policy_step(model, obs_np: np.ndarray, device: torch.device):
-    """
-    TODO: convert obs -> torch, call model to get:
-      - action (for env.step)
-      - logprob (for PPO)
-      - value estimate (for GAE bootstrap)
-    Return whatever your buffer expects.
-    """
-    raise NotImplementedError
-
-
 # ----------------------------
 # Main
 # ----------------------------
@@ -194,12 +186,26 @@ def main(cfg: DictConfig) -> None:
 
     # --- resume (optional) ---
     # TODO: if args.resume: load model/optim + counters (+ RNG state optionally)
+    global_step = 0
+    update_idx = 0
+    next_checkpoint_step = cfg.checkpoint.save_every_steps
     if cfg.runtime.resume.mode is not None:
-        raise NotImplementedError
-    else:
-        global_step = 0
-        update_idx = 0
-        next_checkpoint_step = cfg.checkpoint.save_every_steps
+        assert cfg.runtime.resume.path is not None
+        ckpt = load_checkpoint(cfg.runtime.resume.path)
+        if cfg.runtime.resume.mode == "resume":
+            global_step, update_idx = resume_from_checkpoint(
+                checkpoint_dict=ckpt,
+                model=model,
+                optimizer=optimizer,
+                resume_rng_state=cfg.runtime.resume.resume_rng_state,
+            )
+            next_checkpoint_step = (
+                global_step // cfg.checkpoint.save_every_steps + 1
+            ) * cfg.checkpoint.save_every_steps
+        elif cfg.runtime.resume.mode == "init_from":
+            init_from_checkpoint(checkpoint_dict=ckpt, model=model)
+        else:
+            raise ValueError("Unknown resume mode.")
 
     # --- rollout buffer ---
     assert isinstance(envs.single_observation_space, spaces.Box)
@@ -336,7 +342,10 @@ def main(cfg: DictConfig) -> None:
                 kl_sum += single_update_metrics["approx_kl"]
                 kl_count += 1
             # early-stop by KL
-            if cfg.algo.target_kl is not None and kl_count / kl_sum > cfg.algo.target_kl:
+            if (
+                cfg.algo.target_kl is not None
+                and kl_sum / kl_count > cfg.algo.target_kl
+            ):
                 early_stop = True
                 break
         # weighted mean
@@ -369,6 +378,7 @@ def main(cfg: DictConfig) -> None:
         if cfg.checkpoint.save_every_steps and global_step >= next_checkpoint_step:
             save_checkpoint(
                 run_dir=run_dir,
+                file_name=None,
                 cfg=cfg,
                 model=model,
                 optimizer=optimizer,
@@ -382,6 +392,7 @@ def main(cfg: DictConfig) -> None:
     if cfg.checkpoint.final_save:
         save_checkpoint(
             run_dir=run_dir,
+            file_name=f"final_step_{global_step}",
             cfg=cfg,
             model=model,
             optimizer=optimizer,

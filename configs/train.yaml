@@ -13,3 +13,4 @@ runtime:
   resume:
     mode: null # "null" | "resume" | "init_from"
     path: null # path to resuming checkpoint
+    resume_rng_state: false
