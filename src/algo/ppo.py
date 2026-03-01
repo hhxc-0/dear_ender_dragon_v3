@@ -75,8 +75,8 @@ class PPOLearner:
             metrics["explained_variance"] = to_scalar(
                 (
                     1.0
-                    - (value - mini_batch.values_old).var()
-                    / mini_batch.values_old.var()
+                    - (mini_batch.returns - value).var()
+                    / mini_batch.returns.var()
                 )
             )
             # stability

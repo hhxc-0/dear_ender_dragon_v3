@@ -1,0 +1,4 @@
+id: CartPole-v1
+capture_video: false # training-time video (usually false in Phase 0)
+human_render: false
+# render_mode is typically set by train/eval script
