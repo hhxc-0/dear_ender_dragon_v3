@@ -16,7 +16,12 @@ dependencies = [
 [dependency-groups]
 dev = [
     "black>=26.1,<27",
+    "pytest>=9.0,<10",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"
 
 [[tool.uv.index]]
 url = "https://pypi.org/simple"
