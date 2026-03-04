@@ -21,8 +21,9 @@ import torch
 from gymnasium import spaces
 
 from src.envs.make_env import make_env
-from src.utils.logging import make_logger, Logger
+from src.utils.logging import make_logger, Logger, log_episode_info
 from src.utils.seed import seed_all
+from src.utils.device import select_device
 from src.utils.checkpoint import (
     save_checkpoint,
     load_checkpoint,
@@ -32,59 +33,12 @@ from src.utils.checkpoint import (
 from src.models.factory import make_model
 from src.buffers.rollout_buffer import RolloutBuffer
 from src.algo.factory import make_learner
-
-
-# ----------------------------
-# CLI + config
-# ----------------------------
-def select_device(requested: str) -> torch.device:
-    # choose device based on cfg + availability + cli override
-    requested = requested.lower()
-
-    def mps_available() -> bool:
-        return hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
-
-    if requested == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        if mps_available():
-            return torch.device("mps")
-        return torch.device("cpu")
-    # allow "cuda", "cuda:0", "cpu", "mps"
-    dev = torch.device(requested)
-    if dev.type == "cuda" and not torch.cuda.is_available():
-        raise ValueError(f"{requested} is requested, but CUDA is not available")
-    if dev.type == "mps" and not mps_available():
-        raise ValueError(f"{requested} is requested, but MPS is not available")
-    return dev
+from src.utils.tensor import to_torch
 
 
 # ----------------------------
 # Small helpers (keep minimal)
 # ----------------------------
-def log_episode_info(
-    logger: Logger, global_step: int, info: Dict[str, Any], print_return: bool
-) -> None:
-    # log episodic return/len when present
-    if (
-        "final_info" not in info
-        or "episode" not in info["final_info"]
-        or "_episode" not in info["final_info"]
-    ):
-        return
-    idx = np.flatnonzero(info["final_info"]["_episode"])
-    if idx.size == 0:
-        return
-    rets = info["final_info"]["episode"]["r"][idx].astype(np.float32)
-    lens = info["final_info"]["episode"]["l"][idx].astype(np.int32)
-    if print_return:
-        print(
-            f"got episodic return: {float(rets.mean()):#.5g} at global step: {global_step}"
-        )
-    logger.log_scalar("episodic_return_mean", float(rets.mean()), global_step)
-    logger.log_scalar("episodic_length_mean", float(lens.mean()), global_step)
-
-
 def log_advantage_mean_std(
     logger: Logger, buf: RolloutBuffer, global_step: int
 ) -> None:
@@ -131,29 +85,18 @@ def log_update_metrics(
         logger.log_scalar(k, v, global_step)
 
 
-def to_torch(
-    x: Any, device: Union[str, torch.device], dtype: Optional[torch.dtype] = None
-) -> torch.Tensor:
-    # torch.as_tensor avoids an extra copy on CPU when possible;
-    # specifying device will move/copy to GPU if needed.
-    t = torch.as_tensor(x, device=device)
-    return t if dtype is None else t.to(dtype)
-
-
 # ----------------------------
 # Main
 # ----------------------------
 @hydra.main(version_base=None, config_path="../configs", config_name="train.yaml")
 def main(cfg: DictConfig) -> None:
     # --- setup run dir + logger ---
-    # Hydra changes working dir into outputs/... by default
     run_dir = Path(cfg.run.run_dir)
-    # optional: save resolved config (don't need since hydra will save config)
-    # with open(os.path.join(run_dir, "config_resolved.yaml"), "w") as f:
-    #     f.write(OmegaConf.to_yaml(cfg))
     debug = cfg.debug
-    device = select_device(cfg.device)
     logger = make_logger(cfg.logging.backend, run_dir)
+
+    # --- select device ---
+    device = select_device(cfg.device)
 
     # --- aliasing frequently used configs ---
     T = cfg.rollout.n_steps
@@ -185,7 +128,6 @@ def main(cfg: DictConfig) -> None:
     learner = make_learner(cfg=cfg, model=model, optim=optimizer)
 
     # --- resume (optional) ---
-    # TODO: if args.resume: load model/optim + counters (+ RNG state optionally)
     global_step = 0
     update_idx = 0
     next_checkpoint_step = cfg.checkpoint.save_every_steps
@@ -288,7 +230,7 @@ def main(cfg: DictConfig) -> None:
                 # TODO: log terminated_frac, truncated_frac (counts / total transitions)
                 log_episode_info(
                     logger=logger,
-                    global_step=global_step,
+                    step=global_step,
                     info=info,
                     print_return=False,
                 )

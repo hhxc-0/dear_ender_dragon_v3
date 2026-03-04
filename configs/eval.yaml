@@ -1,0 +1,18 @@
+defaults:
+  - /logging: default
+  - /env: cartpole_default
+  - /model: mlp_actor_critic_gold
+debug: false
+seed: 42
+device: auto # "auto" | "cpu" | "cuda"
+env:
+  capture_video: true
+  human_render: false
+checkpoint_path: ""
+n_envs: 1
+n_episodes: 10
+run:
+  name: ppo_cartpole
+  run_dir: ${hydra:runtime.output_dir}
+  notes: ""
+  deterministic: false

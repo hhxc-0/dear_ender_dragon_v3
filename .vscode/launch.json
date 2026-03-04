@@ -11,6 +11,14 @@
             "console": "integratedTerminal",
             "module": "scripts.train",
             // "args": "--config-name train.yaml",
+        },
+        {
+            "name": "Debug eval.py",
+            "type": "debugpy",
+            "request": "launch",
+            "console": "integratedTerminal",
+            "module": "scripts.eval",
+            "args": "",
         }
     ]
 }

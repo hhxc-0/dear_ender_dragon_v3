@@ -3,8 +3,10 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional, Protocol, Union
+from typing import Any, Mapping, Optional, Protocol, Union, Dict
 import json
+
+import numpy as np
 
 Number = Union[int, float]
 
@@ -100,3 +102,29 @@ def make_logger(backend: Optional[str], run_dir: Union[str, Path]):
         return TensorboardLogger(run_dir)
     else:
         raise ValueError(f"Unknown backend: {backend}")
+
+
+def log_episode_info(
+    logger: "Logger", step: int, info: Dict[str, Any], print_return: bool
+) -> Optional[tuple[np.ndarray, np.ndarray]]:
+    """
+    Log episodic return/length when present in VectorEnv info dict.
+
+    Returns (rets, lens) float32/int32 arrays for finished episodes, or None.
+    """
+    if (
+        "final_info" not in info
+        or "episode" not in info["final_info"]
+        or "_episode" not in info["final_info"]
+    ):
+        return None
+    idx = np.flatnonzero(info["final_info"]["_episode"])
+    if idx.size == 0:
+        return None
+    rets = info["final_info"]["episode"]["r"][idx].astype(np.float32)
+    lens = info["final_info"]["episode"]["l"][idx].astype(np.int32)
+    if print_return:
+        print(f"got episodic return: {float(rets.mean()):#.5g} at step: {step}")
+    logger.log_scalar("episodic_return_mean", float(rets.mean()), step)
+    logger.log_scalar("episodic_length_mean", float(lens.mean()), step)
+    return rets, lens
