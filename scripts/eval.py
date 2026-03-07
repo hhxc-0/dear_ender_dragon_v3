@@ -109,7 +109,6 @@ def main(cfg: DictConfig) -> None:
             obs_np = next_obs_np
 
     # --- aggregate + report ---
-    # TODO: log/print mean/std of episode returns and lengths
     episodic_returns_np = np.asarray(
         episodic_returns[: cfg.n_episodes], dtype=np.float32
     )

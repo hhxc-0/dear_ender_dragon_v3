@@ -9,12 +9,8 @@ import pytest
 import torch
 from gymnasium import spaces
 
-from src.models.mlp_actor_critic import (
-    MLPActorCritic,
-    make_mlp,
-    gain_for_activation,
-    activation_factory,
-)
+from src.models.mlp_actor_critic import MLPActorCritic
+from src.models.nn_utils import build_mlp, gain_for_activation, activation_factory
 
 
 # ---------------------------------------------------------------------------
@@ -347,10 +343,14 @@ class TestDebugMode:
 
 class TestHelpers:
     def test_gain_for_tanh(self):
-        assert gain_for_activation("tanh") == pytest.approx(math.sqrt(2.0))
+        import torch.nn as nn
+
+        assert gain_for_activation("tanh") == pytest.approx(nn.init.calculate_gain("tanh"))
 
     def test_gain_for_relu(self):
-        assert gain_for_activation("relu") == pytest.approx(math.sqrt(2.0))
+        import torch.nn as nn
+
+        assert gain_for_activation("relu") == pytest.approx(nn.init.calculate_gain("relu"))
 
     def test_gain_unknown_raises(self):
         with pytest.raises(ValueError):
@@ -370,15 +370,15 @@ class TestHelpers:
         with pytest.raises(ValueError):
             activation_factory("sigmoid")
 
-    def test_make_mlp_output_shape(self):
-        import torch.nn as nn
-        mlp = make_mlp((4, 8, 8), lambda: nn.Tanh(), activate_last=True)
+    def test_build_mlp_output_shape(self):
+        mlp = build_mlp([4, 8, 8], activation="tanh", activate_last=True)
         x = torch.randn(3, 4)
         out = mlp(x)
         assert out.shape == (3, 8)
 
-    def test_make_mlp_no_activate_last(self):
+    def test_build_mlp_no_activate_last(self):
         """With activate_last=False, the last layer should be a Linear (no activation after it)."""
         import torch.nn as nn
-        mlp = make_mlp((4, 8), lambda: nn.Tanh(), activate_last=False)
+
+        mlp = build_mlp([4, 8], activation="tanh", activate_last=False)
         assert isinstance(list(mlp.children())[-1], nn.Linear)

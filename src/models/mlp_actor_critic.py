@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Tuple, Optional, Any, Callable, Sequence
-import math
+from typing import Tuple, Optional, Any, Sequence
 import torch
 from torch import nn
 from torch.distributions import Categorical
@@ -12,52 +11,12 @@ import gymnasium as gym
 from gymnasium import spaces
 
 from .base import ActorCritic
-
-
-def make_mlp(
-    sizes: tuple[int, ...],
-    act_maker: Callable[[], nn.Module],
-    *,
-    activate_last: bool = False,
-) -> nn.Sequential:
-    layers: list[nn.Module] = []
-    for i in range(len(sizes) - 1):
-        layers.append(nn.Linear(sizes[i], sizes[i + 1]))
-        is_last = i == len(sizes) - 2
-        if (not is_last) or activate_last:
-            layers.append(act_maker())
-    return nn.Sequential(*layers)
-
-
-def init_linear_orthogonal(layer: nn.Linear, gain: float) -> None:
-    nn.init.orthogonal_(layer.weight, gain=gain)
-    nn.init.constant_(layer.bias, 0.0)
-
-
-def init_mlp_orthogonal(module: nn.Module, hidden_gain: float) -> None:
-    # Initialize all Linear layers inside module
-    for m in module.modules():
-        if isinstance(m, nn.Linear):
-            init_linear_orthogonal(m, gain=hidden_gain)
-
-
-def gain_for_activation(activation: str) -> float:
-    # Reasonable defaults for PPO
-    if activation == "tanh":
-        return math.sqrt(2.0)
-        # return nn.init.calculate_gain("tanh")  # for later use
-    if activation == "relu":
-        return math.sqrt(2.0)
-        # return nn.init.calculate_gain("relu")  # for later use
-    raise ValueError(f"Unknown activation: {activation}")
-
-
-def activation_factory(activation: str) -> Callable[[], nn.Module]:
-    if activation == "tanh":
-        return lambda: nn.Tanh()
-    if activation == "relu":
-        return lambda: nn.ReLU()
-    raise ValueError(f"Unknown activation: {activation}")
+from .nn_utils import (
+    build_mlp,
+    gain_for_activation,
+    init_linear_orthogonal,
+    init_module_orthogonal,
+)
 
 
 class MLPActorCritic(ActorCritic):
@@ -84,22 +43,26 @@ class MLPActorCritic(ActorCritic):
         self.act_dim = int(single_act_space.n)
         self.debug = debug
         self.shared_backbone = shared_backbone
-
-        make_act = activation_factory(activation)
         assert len(hidden_sizes) > 0
 
         # definition
         if shared_backbone:
-            self.trunk_mlp = make_mlp(
-                (self.obs_dim, *hidden_sizes), make_act, activate_last=True
+            self.trunk_mlp = build_mlp(
+                [self.obs_dim, *hidden_sizes],
+                activation=activation,
+                activate_last=True,
             )
 
         else:
-            self.pi_mlp = make_mlp(
-                (self.obs_dim, *hidden_sizes), make_act, activate_last=True
+            self.pi_mlp = build_mlp(
+                [self.obs_dim, *hidden_sizes],
+                activation=activation,
+                activate_last=True,
             )
-            self.v_mlp = make_mlp(
-                (self.obs_dim, *hidden_sizes), make_act, activate_last=True
+            self.v_mlp = build_mlp(
+                [self.obs_dim, *hidden_sizes],
+                activation=activation,
+                activate_last=True,
             )
         self.pi_head = nn.Linear(hidden_sizes[-1], self.act_dim)
         self.v_head = nn.Linear(hidden_sizes[-1], 1)
@@ -108,10 +71,10 @@ class MLPActorCritic(ActorCritic):
         if orthogonal_init:
             hidden_gain = gain_for_activation(activation)
             if shared_backbone:
-                init_mlp_orthogonal(self.trunk_mlp, hidden_gain)
+                init_module_orthogonal(self.trunk_mlp, hidden_gain)
             else:
-                init_mlp_orthogonal(self.pi_mlp, hidden_gain)
-                init_mlp_orthogonal(self.v_mlp, hidden_gain)
+                init_module_orthogonal(self.pi_mlp, hidden_gain)
+                init_module_orthogonal(self.v_mlp, hidden_gain)
             init_linear_orthogonal(self.pi_head, 0.01)
             init_linear_orthogonal(self.v_head, 1.0)
 
