@@ -4,6 +4,8 @@ from typing import Optional, Union
 from pathlib import Path
 import gymnasium as gym
 
+import highway_env
+
 
 def make_env(id: str, n_envs: int = 1, seed: int = 42, capture_video: bool = False, video_folder: Optional[Union[str, Path]] = None, human_render: bool = False):
     assert not (capture_video and human_render), "capture_video and human_render cannot both be set to True."
