@@ -2,6 +2,7 @@ defaults:
   - /logging: default
   - /env: cartpole_default
   - /model: mlp_actor_critic_gold
+  - _self_
 debug: false
 seed: 42
 device: auto # "auto" | "cpu" | "cuda"

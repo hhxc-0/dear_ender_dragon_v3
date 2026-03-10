@@ -3,7 +3,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Optional, Protocol, Union, Dict
+from typing import Any, Mapping, Optional, Protocol, Union
 import json
 
 import numpy as np
@@ -105,7 +105,7 @@ def make_logger(backend: Optional[str], run_dir: Union[str, Path]):
 
 
 def log_episode_info(
-    logger: "Logger", step: int, info: Dict[str, Any], print_return: bool
+    logger: "Logger", step: int, info: Mapping[str, Any], print_return: bool
 ) -> Optional[tuple[np.ndarray, np.ndarray]]:
     """
     Log episodic return/length when present in VectorEnv info dict.

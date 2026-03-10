@@ -2,21 +2,17 @@
 
 from __future__ import annotations
 
-import time
-import os
 from pathlib import Path
+from typing import cast, Any
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from typing import Any, Dict, Optional, Union
 import tensorboard
-from collections import defaultdict
 
 import numpy as np
 import torch
-from gymnasium import spaces
 
 from src.envs.make_env import make_env
-from src.utils.logging import make_logger, Logger, log_episode_info
+from src.utils.logging import make_logger, log_episode_info
 from src.utils.seed import seed_all
 from src.utils.device import select_device
 from src.utils.checkpoint import load_checkpoint, init_from_checkpoint
@@ -49,8 +45,12 @@ def main(cfg: DictConfig) -> None:
     seed_all(cfg.seed, cfg.run.deterministic)
 
     # --- create env ---
+    env_kwargs = OmegaConf.to_container(cfg.env.kwargs, resolve=True) if "kwargs" in cfg.env else None
+    assert env_kwargs is None or isinstance(env_kwargs, dict)
+    env_kwargs = cast(dict[str, Any] | None, env_kwargs)
     envs = make_env(
-        id=cfg.env.id,
+        env_id=cfg.env.id,
+        env_kwargs=env_kwargs,
         n_envs=N,
         seed=cfg.seed,
         capture_video=cfg.env.capture_video,

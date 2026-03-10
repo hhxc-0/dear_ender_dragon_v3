@@ -1,4 +1,5 @@
 id: highway-v0
+flatten_observation: true
 capture_video: false # training-time video (usually false in Phase 0)
 human_render: false
 # render_mode is typically set by train/eval script

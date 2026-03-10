@@ -1,0 +1,18 @@
+# @package _global_
+# Phase 1 config (Highway)
+# Highway environment with the kinematics observation (https://highway-env.farama.org/observations/#kinematics) as a baseline before moving to image observations.
+defaults:
+  - /env: highway_default
+  - /algo: ppo_gold
+  - /model: mlp_actor_critic_gold
+  - /optim: adam_gold
+  - _self_
+train:
+  total_env_steps: 32768
+rollout:
+  n_envs: 1 # looks like multiple envs doesn’t work with highway environments
+  n_steps: 1024 # steps per update (T)
+checkpoint:
+  save_every_steps: 4096 # int or null (no saves)
+  final_save: true # save at the end
+  save_rng_state: true # turn on later if you want stricter reproducibility

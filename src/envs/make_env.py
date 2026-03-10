@@ -1,25 +1,29 @@
 # Create env, seed reset(), optionally record stats/video in eval
 
-from typing import Optional, Union
+from typing import Optional, Union, Mapping, Any
 from pathlib import Path
 import gymnasium as gym
 
 import highway_env
 
 
-def make_env(id: str, n_envs: int = 1, seed: int = 42, capture_video: bool = False, video_folder: Optional[Union[str, Path]] = None, human_render: bool = False):
+def make_env(env_id: str, env_kwargs: Optional[Mapping[str, Any]] = None, n_envs: int = 1, seed: int = 42, flatten_observation: bool = False, capture_video: bool = False, video_folder: Optional[Union[str, Path]] = None, human_render: bool = False):
     assert not (capture_video and human_render), "capture_video and human_render cannot both be set to True."
+    env_kwargs = dict(env_kwargs or {})
+    assert "render_mode" not in env_kwargs.keys()
     def make_thunk(rank:int):
         def thunk():
             if rank == 0 and capture_video:
                 assert video_folder is not None, "video_folder is required for capture_video."
-                env = gym.make(id, render_mode="rgb_array")
+                env = gym.make(env_id, render_mode="rgb_array", **env_kwargs)
                 env = gym.wrappers.RecordVideo(env, video_folder=str(video_folder))
             elif rank == 0 and human_render:
-                env = gym.make(id, render_mode="human")
+                env = gym.make(env_id, render_mode="human", **env_kwargs)
             else:
-                env = gym.make(id)
+                env = gym.make(env_id, **env_kwargs)
             env = gym.wrappers.RecordEpisodeStatistics(env)
+            if flatten_observation:
+                env = gym.wrappers.FlattenObservation(env)
             # Seed spaces (optional but good practice)
             env.action_space.seed(seed + rank)
             env.observation_space.seed(seed + rank)

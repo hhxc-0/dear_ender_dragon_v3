@@ -8,11 +8,10 @@ Keep this file as orchestration/wiring; put math-heavy code in src/*.
 from __future__ import annotations
 
 import time
-import os
 from pathlib import Path
+from typing import cast, Any
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from typing import Any, Dict, Optional, Union
 import tensorboard
 from collections import defaultdict
 
@@ -106,10 +105,14 @@ def main(cfg: DictConfig) -> None:
     seed_all(cfg.seed, cfg.run.deterministic)
 
     # --- create env ---
+    env_kwargs = OmegaConf.to_container(cfg.env.kwargs, resolve=True) if "kwargs" in cfg.env else None
+    assert env_kwargs is None or isinstance(env_kwargs, dict)
+    env_kwargs = cast(dict[str, Any] | None, env_kwargs)
     envs = make_env(
-        id=cfg.env.id,
+        env_id=cfg.env.id,
         n_envs=N,
         seed=cfg.seed,
+        flatten_observation=cfg.env.flatten_observation,
         capture_video=cfg.env.capture_video,
         video_folder=run_dir / "videos",
         human_render=cfg.env.human_render,

@@ -1,11 +1,12 @@
 defaults:
-  - /experiment: cartpole_gold
+  - /experiment: highway_kinematics
   - /logging: default
+  - _self_
 debug: false
 seed: 42
 device: auto # "auto" | "cpu" | "cuda"
 run:
-  name: ppo_cartpole
+  name: ""
   run_dir: ${hydra:runtime.output_dir}
   notes: ""
   deterministic: false
