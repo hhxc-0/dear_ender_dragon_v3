@@ -1,0 +1,17 @@
+defaults:
+  - _base
+  - _self_
+
+id: highway-v0
+normalize_pixel_observation: true
+kwargs:
+  config:
+    observation:
+      type: GrayscaleObservation
+      observation_shape:
+        __type__: tuple
+        items: [128, 64]
+      stack_size: 4
+      weights: [0.2989, 0.5870, 0.1140]
+      scaling: 1.75
+    policy_frequency: 2

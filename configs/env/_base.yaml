@@ -1,0 +1,6 @@
+id: ???
+kwargs: {}
+flatten_observation: false
+normalize_pixel_observation: false
+capture_video: false
+human_render: false

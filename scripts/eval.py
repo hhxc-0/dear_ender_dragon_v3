@@ -45,7 +45,11 @@ def main(cfg: DictConfig) -> None:
     seed_all(cfg.seed, cfg.run.deterministic)
 
     # --- create env ---
-    env_kwargs = OmegaConf.to_container(cfg.env.kwargs, resolve=True) if "kwargs" in cfg.env else None
+    env_kwargs = (
+        OmegaConf.to_container(cfg.env.kwargs, resolve=True)
+        if "kwargs" in cfg.env
+        else None
+    )
     assert env_kwargs is None or isinstance(env_kwargs, dict)
     env_kwargs = cast(dict[str, Any] | None, env_kwargs)
     envs = make_env(
@@ -53,6 +57,8 @@ def main(cfg: DictConfig) -> None:
         env_kwargs=env_kwargs,
         n_envs=N,
         seed=cfg.seed,
+        flatten_observation=cfg.env.flatten_observation,
+        normalize_pixel_observation=cfg.env.normalize_pixel_observation,
         capture_video=cfg.env.capture_video,
         video_folder=run_dir / "videos",
         human_render=cfg.env.human_render,
