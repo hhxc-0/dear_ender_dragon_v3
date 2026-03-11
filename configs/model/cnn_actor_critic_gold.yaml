@@ -1,0 +1,11 @@
+name: cnn_actor_critic # mlp_actor_critic | cnn_actor_critic ...
+cnn_channels: [32, 64, 64]
+cnn_kernel_sizes: [8, 4, 3]
+cnn_strides: [4, 2, 1]
+cnn_paddings: [0, 0, 0]
+cnn_activation: "relu"
+mlp_hidden_sizes: [512]
+mlp_activation: "tanh"
+shared_backbone: True
+orthogonal_init: True
+debug: False

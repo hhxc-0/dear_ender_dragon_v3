@@ -64,3 +64,37 @@ def build_mlp(
         if (not is_last) or activate_last:
             layers.append(act_maker())
     return nn.Sequential(*layers)
+
+
+def build_cnn(
+    channels: Sequence[int],
+    kernel_sizes: Sequence[int],
+    strides: Sequence[int],
+    paddings: Sequence[int],
+    *,
+    activation: str,
+    activate_last: bool = True,
+) -> nn.Sequential:
+    """Build a simple CNN: Conv2d layers with an activation after each layer."""
+    assert len(channels) >= 2
+    assert len(kernel_sizes) >= 1
+    assert len(strides) >= 1
+    assert len(paddings) >= 1
+
+    act_maker = activation_factory(activation)
+
+    layers: list[nn.Module] = []
+    for i in range(len(channels) - 1):
+        layers.append(
+            nn.Conv2d(
+                int(channels[i]),
+                int(channels[i + 1]),
+                int(kernel_sizes[i]),
+                int(strides[i]),
+                int(paddings[i]),
+            )
+        )
+        is_last = i == len(channels) - 2
+        if (not is_last) or activate_last:
+            layers.append(act_maker())
+    return nn.Sequential(*layers)

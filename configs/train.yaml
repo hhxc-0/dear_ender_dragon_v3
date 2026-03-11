@@ -1,5 +1,5 @@
 defaults:
-  - /experiment: highway_kinematics
+  - /experiment: highway_image_gold
   - /logging: default
   - _self_
 debug: false

@@ -1,4 +1,4 @@
-# MLP actor-critic for CartPole/LunarLander (Categorical actions)
+# CNN actor-critic for image observation (Categorical actions)
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ from gymnasium import spaces
 
 from .base import ActorCritic
 from .nn_utils import (
+    build_cnn,
     build_mlp,
     gain_for_activation,
     init_linear_orthogonal,
@@ -19,15 +20,27 @@ from .nn_utils import (
 )
 
 
-class MLPActorCritic(ActorCritic):
+def get_flattened_dim(input_shape: Sequence[int], cnn: torch.nn.Module) -> int:
+    dummy = torch.zeros(1, *input_shape)
+    output = cnn(dummy)
+    assert isinstance(output, torch.Tensor)
+    return output.flatten(1).shape[1]
+
+
+class CNNActorCritic(ActorCritic):
     def __init__(
         self,
         single_obs_space: spaces.Space,
         single_act_space: spaces.Space,
         *,
         debug: bool = False,
-        hidden_sizes: Sequence[int] = (64, 64),
-        activation: str = "tanh",  # "tanh" (SB3-style) or "relu"
+        cnn_channels: Sequence[int],
+        cnn_kernel_sizes: Sequence[int],
+        cnn_strides: Sequence[int],
+        cnn_paddings: Sequence[int],
+        cnn_activation: str = "relu",  # "tanh" or "relu"
+        mlp_hidden_sizes: Sequence[int] = (256,),
+        mlp_activation: str = "tanh",  # "tanh" or "relu"
         shared_backbone: bool = True,  # shared trunk vs separate pi/v networks
         orthogonal_init: bool = True,  # common in PPO
         # log_std_init: float = -0.5,  # only used if you later add continuous actions
@@ -35,46 +48,86 @@ class MLPActorCritic(ActorCritic):
         super().__init__()
         assert isinstance(single_obs_space, spaces.Box)
         assert isinstance(single_act_space, spaces.Discrete)
-        assert len(single_obs_space.shape) == 1
+        assert (
+            len(single_obs_space.shape) == 3
+        ), f"Expected image obs with shape (C,H,W), got {single_obs_space.shape}"
         assert isinstance(
             single_act_space.n, (int, np.integer)
         ), f"Expect int for number of actions, got {type(single_act_space.n)}"
-        self.obs_dim = single_obs_space.shape[0]
+        self.obs_shape = single_obs_space.shape
         self.act_dim = int(single_act_space.n)
         self.debug = debug
         self.shared_backbone = shared_backbone
-        assert len(hidden_sizes) > 0
+        in_channels = self.obs_shape[0]
 
         # definition
         if shared_backbone:
+            self.trunk_cnn = build_cnn(
+                channels=[in_channels, *cnn_channels],
+                kernel_sizes=cnn_kernel_sizes,
+                strides=cnn_strides,
+                paddings=cnn_paddings,
+                activation=cnn_activation,
+                activate_last=True,
+            )
+            flat_dim = get_flattened_dim(
+                input_shape=single_obs_space.shape, cnn=self.trunk_cnn
+            )
             self.trunk_mlp = build_mlp(
-                [self.obs_dim, *hidden_sizes],
-                activation=activation,
+                [flat_dim, *mlp_hidden_sizes],
+                activation=mlp_activation,
                 activate_last=True,
             )
 
         else:
-            self.pi_mlp = build_mlp(
-                [self.obs_dim, *hidden_sizes],
-                activation=activation,
+            self.pi_cnn = build_cnn(
+                channels=[in_channels, *cnn_channels],
+                kernel_sizes=cnn_kernel_sizes,
+                strides=cnn_strides,
+                paddings=cnn_paddings,
+                activation=cnn_activation,
                 activate_last=True,
+            )
+            pi_flat_dim = get_flattened_dim(
+                input_shape=single_obs_space.shape, cnn=self.pi_cnn
+            )
+            self.pi_mlp = build_mlp(
+                [pi_flat_dim, *mlp_hidden_sizes],
+                activation=mlp_activation,
+                activate_last=True,
+            )
+
+            self.v_cnn = build_cnn(
+                channels=[in_channels, *cnn_channels],
+                kernel_sizes=cnn_kernel_sizes,
+                strides=cnn_strides,
+                paddings=cnn_paddings,
+                activation=cnn_activation,
+                activate_last=True,
+            )
+            v_flat_dim = get_flattened_dim(
+                input_shape=single_obs_space.shape, cnn=self.v_cnn
             )
             self.v_mlp = build_mlp(
-                [self.obs_dim, *hidden_sizes],
-                activation=activation,
+                [v_flat_dim, *mlp_hidden_sizes],
+                activation=mlp_activation,
                 activate_last=True,
             )
-        self.pi_head = nn.Linear(hidden_sizes[-1], self.act_dim)
-        self.v_head = nn.Linear(hidden_sizes[-1], 1)
+        self.pi_head = nn.Linear(mlp_hidden_sizes[-1], self.act_dim)
+        self.v_head = nn.Linear(mlp_hidden_sizes[-1], 1)
 
         # initialization
         if orthogonal_init:
-            hidden_gain = gain_for_activation(activation)
+            cnn_gain = gain_for_activation(cnn_activation)
+            mlp_gain = gain_for_activation(mlp_activation)
             if shared_backbone:
-                init_module_orthogonal(self.trunk_mlp, hidden_gain)
+                init_module_orthogonal(self.trunk_cnn, cnn_gain)
+                init_module_orthogonal(self.trunk_mlp, mlp_gain)
             else:
-                init_module_orthogonal(self.pi_mlp, hidden_gain)
-                init_module_orthogonal(self.v_mlp, hidden_gain)
+                init_module_orthogonal(self.pi_cnn, cnn_gain)
+                init_module_orthogonal(self.pi_mlp, mlp_gain)
+                init_module_orthogonal(self.v_cnn, cnn_gain)
+                init_module_orthogonal(self.v_mlp, mlp_gain)
             init_linear_orthogonal(self.pi_head, 0.01)
             init_linear_orthogonal(self.v_head, 1.0)
 
@@ -84,21 +137,25 @@ class MLPActorCritic(ActorCritic):
     def _check_obs(self, obs: torch.Tensor) -> torch.Tensor:
         """Validate obs shape (debug only) and cast to float32."""
         if self.debug:
+            assert obs.ndim == 1 + len(
+                self.obs_shape
+            ), f"Expected obs [B, *obs_shape], got shape {tuple(obs.shape)}"
             assert (
-                obs.ndim == 2
-            ), f"Expected obs [B, obs_dim], got shape {tuple(obs.shape)}"
-            assert (
-                obs.shape[1] == self.obs_dim
-            ), f"Expected obs_dim={self.obs_dim}, got {obs.shape[1]}"
+                obs.shape[1:] == self.obs_shape
+            ), f"Expected obs.shape={[1, *self.obs_shape]}, got {obs.shape}"
         return obs.to(torch.float32)
 
     def _forward_pi(self, obs: torch.Tensor) -> torch.Tensor:
         """Policy-only forward pass returning logits."""
         if self.shared_backbone:
-            hidden = self.trunk_mlp(obs)
+            hidden = self.trunk_cnn(obs)
+            hidden = hidden.flatten(1)
+            hidden = self.trunk_mlp(hidden)
             logits = self.pi_head(hidden)
         else:
-            pi_hidden = self.pi_mlp(obs)
+            pi_hidden = self.pi_cnn(obs)
+            pi_hidden = pi_hidden.flatten(1)
+            pi_hidden = self.pi_mlp(pi_hidden)
             logits = self.pi_head(pi_hidden)
         if self.debug:
             assert torch.isfinite(logits).all()
@@ -107,10 +164,14 @@ class MLPActorCritic(ActorCritic):
     def _forward_v(self, obs: torch.Tensor) -> torch.Tensor:
         """Value-only forward pass returning value."""
         if self.shared_backbone:
-            hidden = self.trunk_mlp(obs)
+            hidden = self.trunk_cnn(obs)
+            hidden = hidden.flatten(1)
+            hidden = self.trunk_mlp(hidden)
             value = self.v_head(hidden)
         else:
-            v_hidden = self.v_mlp(obs)
+            v_hidden = self.v_cnn(obs)
+            v_hidden = v_hidden.flatten(1)
+            v_hidden = self.v_mlp(v_hidden)
             value = self.v_head(v_hidden)
         if self.debug:
             assert torch.isfinite(value).all()
@@ -118,7 +179,7 @@ class MLPActorCritic(ActorCritic):
 
     def get_action_and_value(
         self,
-        obs: torch.Tensor,  # [batch, obs_dim]
+        obs: torch.Tensor,  # [batch, *obs_shape]
         # state: Optional[Any],  # unused
         # done: Optional[torch.Tensor] = None,  # unused
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Optional[Any]]:
@@ -134,7 +195,7 @@ class MLPActorCritic(ActorCritic):
 
     def get_value(
         self,
-        obs: torch.Tensor,  # [batch, obs_dim]
+        obs: torch.Tensor,  # [batch, *obs_shape]
         # state: Optional[Any],  # unused
         # done: Optional[torch.Tensor] = None,  # unused
     ) -> torch.Tensor:
