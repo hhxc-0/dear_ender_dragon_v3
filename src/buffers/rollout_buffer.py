@@ -117,7 +117,6 @@ class RolloutBuffer:
             (self.T, self.B), dtype=torch.float32, device=self.device
         )
         gae = zeros(self.B, dtype=torch.float32, device=self.device)
-        next_value = self.next_values[self.t - 1]
         done = self.dones  # terminated | truncated
         timeout = self.timeouts  # true only for time-limit truncation
         # Allow bootstrap unless it's (terminal or non-timeout truncation)
@@ -125,11 +124,10 @@ class RolloutBuffer:
         continue_gae = (~done).float()  # shape [T, B]
         for t in reversed(range(self.t)):
             delta = (
-                self.rewards[t] + gamma * next_value * bootstrap_td[t] - self.values[t]
+                self.rewards[t] + gamma * self.next_values[t] * bootstrap_td[t] - self.values[t]
             )
             gae = delta + gamma * gae_lambda * continue_gae[t] * gae
             self.advantages[t] = gae
-            next_value = self.values[t]
         self.returns = self.advantages + self.values
         if normalize_advantages:
             adv_flatten = self.advantages.reshape(-1)

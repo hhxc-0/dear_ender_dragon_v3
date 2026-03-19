@@ -286,6 +286,206 @@ class TestGAE:
         assert buf.advantages is not None
         assert torch.isclose(buf.advantages[0, 0], torch.tensor(expected_adv0), atol=1e-5)
 
+    def test_timeout_mid_rollout_uses_terminal_value_not_reset_value(self):
+        """Regression: a timeout at step 0 of a 3-step rollout must bootstrap
+        with V(terminal_obs), not V(reset_obs) stored in values[1]."""
+        gamma, lam = 0.99, 1.0
+        buf = RolloutBuffer(T=3, B=1, obs_shape=(1,), device="cpu")
+
+        # Step 0: timeout truncation
+        #   value=0.5 (current state), next_value=5.0 (V(terminal_obs) before reset)
+        buf.add(
+            obs=torch.zeros(1, 1),
+            action=torch.zeros(1, dtype=torch.int64),
+            logp=torch.zeros(1),
+            value=torch.tensor([0.5]),
+            next_value=torch.tensor([5.0]),
+            reward=torch.tensor([1.0]),
+            terminated=torch.zeros(1, dtype=torch.bool),
+            truncated=torch.ones(1, dtype=torch.bool),
+            done=torch.ones(1, dtype=torch.bool),
+            timeout=torch.ones(1, dtype=torch.bool),
+            episode_start=torch.zeros(1, dtype=torch.bool),
+        )
+        # Step 1: new episode after auto-reset (value=0.1, very different from 5.0)
+        buf.add(
+            obs=torch.zeros(1, 1),
+            action=torch.zeros(1, dtype=torch.int64),
+            logp=torch.zeros(1),
+            value=torch.tensor([0.1]),
+            next_value=torch.zeros(1),
+            reward=torch.tensor([1.0]),
+            terminated=torch.zeros(1, dtype=torch.bool),
+            truncated=torch.zeros(1, dtype=torch.bool),
+            done=torch.zeros(1, dtype=torch.bool),
+            timeout=torch.zeros(1, dtype=torch.bool),
+            episode_start=torch.ones(1, dtype=torch.bool),
+        )
+        # Step 2: continuation
+        buf.add(
+            obs=torch.zeros(1, 1),
+            action=torch.zeros(1, dtype=torch.int64),
+            logp=torch.zeros(1),
+            value=torch.tensor([0.2]),
+            next_value=torch.zeros(1),
+            reward=torch.tensor([1.0]),
+            terminated=torch.zeros(1, dtype=torch.bool),
+            truncated=torch.zeros(1, dtype=torch.bool),
+            done=torch.zeros(1, dtype=torch.bool),
+            timeout=torch.zeros(1, dtype=torch.bool),
+            episode_start=torch.zeros(1, dtype=torch.bool),
+        )
+        buf.finalize(torch.tensor([0.3]))
+        buf.compute_returns_and_advantages(
+            gamma=gamma, gae_lambda=lam, normalize_advantages=False, eps=1e-8
+        )
+
+        # delta_0 = r + gamma * V(terminal) * bootstrap - V(s_0)
+        #         = 1.0 + 0.99 * 5.0 * 1.0 - 0.5 = 5.45
+        # continue_gae[0] = 0.0 (done), so gae_0 = delta_0 = 5.45
+        expected_adv0 = 1.0 + gamma * 5.0 - 0.5
+        assert buf.advantages is not None
+        assert torch.isclose(
+            buf.advantages[0, 0], torch.tensor(expected_adv0), atol=1e-5
+        ), (
+            f"Expected {expected_adv0}, got {buf.advantages[0, 0].item()}. "
+            f"If ~0.599, the bug is using V(reset)=0.1 instead of V(terminal)=5.0"
+        )
+
+    def test_timeout_mid_rollout_multiple_envs(self):
+        """Timeout in env 0 at step 1, no done in env 1 — each env independent."""
+        gamma, lam = 0.99, 1.0
+        buf = RolloutBuffer(T=3, B=2, obs_shape=(1,), device="cpu")
+
+        def add(value, next_value, reward, done, timeout, episode_start):
+            buf.add(
+                obs=torch.zeros(2, 1),
+                action=torch.zeros(2, dtype=torch.int64),
+                logp=torch.zeros(2),
+                value=value,
+                next_value=next_value,
+                reward=reward,
+                terminated=torch.zeros(2, dtype=torch.bool),
+                truncated=done,
+                done=done,
+                timeout=timeout,
+                episode_start=episode_start,
+            )
+
+        # Step 0: both envs normal
+        add(
+            value=torch.tensor([1.0, 1.0]),
+            next_value=torch.zeros(2),
+            reward=torch.tensor([1.0, 1.0]),
+            done=torch.zeros(2, dtype=torch.bool),
+            timeout=torch.zeros(2, dtype=torch.bool),
+            episode_start=torch.zeros(2, dtype=torch.bool),
+        )
+        # Step 1: env 0 timeouts with V(terminal)=8.0, env 1 continues
+        add(
+            value=torch.tensor([2.0, 2.0]),
+            next_value=torch.tensor([8.0, 0.0]),
+            reward=torch.tensor([1.0, 1.0]),
+            done=torch.tensor([True, False]),
+            timeout=torch.tensor([True, False]),
+            episode_start=torch.zeros(2, dtype=torch.bool),
+        )
+        # Step 2: env 0 new episode (V(reset)=0.1), env 1 continues
+        add(
+            value=torch.tensor([0.1, 3.0]),
+            next_value=torch.zeros(2),
+            reward=torch.tensor([1.0, 1.0]),
+            done=torch.zeros(2, dtype=torch.bool),
+            timeout=torch.zeros(2, dtype=torch.bool),
+            episode_start=torch.tensor([True, False]),
+        )
+        buf.finalize(torch.tensor([0.5, 0.5]))
+        buf.compute_returns_and_advantages(
+            gamma=gamma, gae_lambda=lam, normalize_advantages=False, eps=1e-8
+        )
+
+        # Env 0, step 1: delta = 1.0 + 0.99 * 8.0 - 2.0 = 6.92
+        # continue_gae=0 (done), so adv = 6.92
+        expected = 1.0 + gamma * 8.0 - 2.0
+        assert buf.advantages is not None
+        assert torch.isclose(buf.advantages[1, 0], torch.tensor(expected), atol=1e-5), (
+            f"Env 0 step 1: expected {expected}, got {buf.advantages[1, 0].item()}"
+        )
+
+        # Env 1, step 1: no done, next_values[1] = values[2] = 3.0 (from finalize)
+        # delta = 1.0 + 0.99 * 3.0 - 2.0 = 1.97
+        # gae propagates from step 2
+        delta2_env1 = 1.0 + gamma * 0.5 - 3.0  # step 2 bootstrap from last_value
+        delta1_env1 = 1.0 + gamma * 3.0 - 2.0
+        expected_env1 = delta1_env1 + gamma * lam * delta2_env1
+        assert torch.isclose(buf.advantages[1, 1], torch.tensor(expected_env1), atol=1e-5), (
+            f"Env 1 step 1: expected {expected_env1}, got {buf.advantages[1, 1].item()}"
+        )
+
+    def test_consecutive_timeouts_both_use_correct_terminal_values(self):
+        """Two consecutive timeouts at steps 0 and 1 — each must use its own V(terminal)."""
+        gamma, lam = 0.99, 1.0
+        buf = RolloutBuffer(T=3, B=1, obs_shape=(1,), device="cpu")
+
+        # Step 0: timeout, V(terminal)=4.0
+        buf.add(
+            obs=torch.zeros(1, 1),
+            action=torch.zeros(1, dtype=torch.int64),
+            logp=torch.zeros(1),
+            value=torch.tensor([1.0]),
+            next_value=torch.tensor([4.0]),
+            reward=torch.tensor([1.0]),
+            terminated=torch.zeros(1, dtype=torch.bool),
+            truncated=torch.ones(1, dtype=torch.bool),
+            done=torch.ones(1, dtype=torch.bool),
+            timeout=torch.ones(1, dtype=torch.bool),
+            episode_start=torch.zeros(1, dtype=torch.bool),
+        )
+        # Step 1: also timeout (new short episode), V(terminal)=7.0
+        buf.add(
+            obs=torch.zeros(1, 1),
+            action=torch.zeros(1, dtype=torch.int64),
+            logp=torch.zeros(1),
+            value=torch.tensor([0.2]),
+            next_value=torch.tensor([7.0]),
+            reward=torch.tensor([2.0]),
+            terminated=torch.zeros(1, dtype=torch.bool),
+            truncated=torch.ones(1, dtype=torch.bool),
+            done=torch.ones(1, dtype=torch.bool),
+            timeout=torch.ones(1, dtype=torch.bool),
+            episode_start=torch.ones(1, dtype=torch.bool),
+        )
+        # Step 2: new episode after second reset
+        buf.add(
+            obs=torch.zeros(1, 1),
+            action=torch.zeros(1, dtype=torch.int64),
+            logp=torch.zeros(1),
+            value=torch.tensor([0.3]),
+            next_value=torch.zeros(1),
+            reward=torch.tensor([1.0]),
+            terminated=torch.zeros(1, dtype=torch.bool),
+            truncated=torch.zeros(1, dtype=torch.bool),
+            done=torch.zeros(1, dtype=torch.bool),
+            timeout=torch.zeros(1, dtype=torch.bool),
+            episode_start=torch.ones(1, dtype=torch.bool),
+        )
+        buf.finalize(torch.tensor([0.5]))
+        buf.compute_returns_and_advantages(
+            gamma=gamma, gae_lambda=lam, normalize_advantages=False, eps=1e-8
+        )
+
+        assert buf.advantages is not None
+        # Step 1: delta = 2.0 + 0.99*7.0 - 0.2 = 8.73, gae cut by done
+        expected1 = 2.0 + gamma * 7.0 - 0.2
+        assert torch.isclose(buf.advantages[1, 0], torch.tensor(expected1), atol=1e-5), (
+            f"Step 1: expected {expected1}, got {buf.advantages[1, 0].item()}"
+        )
+        # Step 0: delta = 1.0 + 0.99*4.0 - 1.0 = 3.96, gae cut by done
+        expected0 = 1.0 + gamma * 4.0 - 1.0
+        assert torch.isclose(buf.advantages[0, 0], torch.tensor(expected0), atol=1e-5), (
+            f"Step 0: expected {expected0}, got {buf.advantages[0, 0].item()}"
+        )
+
     def test_returns_equal_advantages_plus_values(self, filled_buffer):
         assert torch.allclose(
             filled_buffer.returns,
