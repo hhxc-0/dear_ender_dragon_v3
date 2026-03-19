@@ -50,10 +50,14 @@ def log_advantage_mean_std(
         adv_n = buf.advantages_norm.reshape(-1)
         assert torch.isfinite(adv).all()
         assert torch.isfinite(adv_n).all()
-        logger.log_scalar("adv_mean_raw", adv.mean().item(), global_step)
-        logger.log_scalar("adv_std_raw", adv.std(unbiased=False).item(), global_step)
-        logger.log_scalar("adv_mean_norm", adv_n.mean().item(), global_step)
-        logger.log_scalar("adv_std_norm", adv_n.std(unbiased=False).item(), global_step)
+        logger.log_scalar("advantages/mean_raw", adv.mean().item(), global_step)
+        logger.log_scalar(
+            "advantages/std_raw", adv.std(unbiased=False).item(), global_step
+        )
+        logger.log_scalar("advantages/mean_norm", adv_n.mean().item(), global_step)
+        logger.log_scalar(
+            "advantages/std_norm", adv_n.std(unbiased=False).item(), global_step
+        )
 
 
 def log_sps(
@@ -68,18 +72,49 @@ def log_sps(
     delta_step = global_step - starting_step
     rollout_delta_time = rollout_time - starting_time
     total_delta_time = ending_time - starting_time
-    logger.log_scalar("sps_env", delta_step / rollout_delta_time, global_step)
-    logger.log_scalar("sps_total", delta_step / total_delta_time, global_step)
-    logger.log_scalar("rollout_sec", rollout_delta_time, global_step)
-    logger.log_scalar("update_sec", ending_time - rollout_time, global_step)
+    logger.log_scalar("timing/sps_env", delta_step / rollout_delta_time, global_step)
+    logger.log_scalar("timing/sps_total", delta_step / total_delta_time, global_step)
+    logger.log_scalar("timing/rollout_sec", rollout_delta_time, global_step)
+    logger.log_scalar("timing/update_sec", ending_time - rollout_time, global_step)
     if print_sps:
         print(f"SPS: {delta_step / rollout_delta_time}")
+
+
+def log_episode_end_metrics(
+    logger: Logger,
+    global_step: int,
+    completed_episodes: int,
+    terminated_episodes: int,
+    truncated_episodes: int,
+    timeout_episodes: int,
+) -> None:
+    logger.log_scalar("episodes/completed", completed_episodes, global_step)
+    logger.log_scalar("episodes/terminated", terminated_episodes, global_step)
+    logger.log_scalar("episodes/truncated", truncated_episodes, global_step)
+    logger.log_scalar("episodes/timeout", timeout_episodes, global_step)
+
+    if completed_episodes > 0:
+        logger.log_scalar(
+            "episodes/truncation_rate",
+            truncated_episodes / completed_episodes,
+            global_step,
+        )
+        logger.log_scalar(
+            "episodes/timeout_rate",
+            timeout_episodes / completed_episodes,
+            global_step,
+        )
+        logger.log_scalar(
+            "episodes/termination_rate",
+            terminated_episodes / completed_episodes,
+            global_step,
+        )
 
 
 def log_update_metrics(
     logger: Logger, global_step: int, metrics: dict, early_stop: bool
 ) -> None:
-    logger.log_scalar("early_stop", int(early_stop), global_step)
+    logger.log_scalar("update/early_stop", int(early_stop), global_step)
     for k, v in metrics.items():
         logger.log_scalar(k, v, global_step)
 
@@ -100,6 +135,8 @@ def main(cfg: DictConfig) -> None:
     # --- aliasing frequently used configs ---
     T = cfg.rollout.n_steps
     N = cfg.rollout.n_envs
+    total_env_steps = cfg.train.total_env_steps
+    num_updates = np.ceil(total_env_steps / (N * T))
 
     # --- seeding / determinism ---
     seed_all(cfg.seed, cfg.run.deterministic)
@@ -124,7 +161,7 @@ def main(cfg: DictConfig) -> None:
         human_render=cfg.env.human_render,
     )
 
-    # --- build model + optimizer + learner ---
+    # --- build model + optimizer + learner + LR scheduler ---
     model = make_model(
         cfg.model, envs.single_observation_space, envs.single_action_space
     ).to(device)
@@ -187,7 +224,6 @@ def main(cfg: DictConfig) -> None:
     # ----------------------------
     # Training loop (by updates)
     # ----------------------------
-    total_env_steps = cfg.train.total_env_steps
 
     while global_step < total_env_steps:
         # --- reset SPS counters ---
@@ -195,6 +231,12 @@ def main(cfg: DictConfig) -> None:
             torch.cuda.synchronize()
         starting_step = global_step
         starting_time = time.perf_counter()
+
+        # --- reset episode counters ---
+        completed_episodes = 0
+        terminated_episodes = 0
+        truncated_episodes = 0
+        timeout_episodes = 0
 
         # --- collect rollout ---
         with torch.no_grad():
@@ -215,6 +257,10 @@ def main(cfg: DictConfig) -> None:
                     ~terminated
                 )  # move to info["TimeLimit.truncated"] when available
                 done = terminated | truncated
+                completed_episodes += int(done.sum().item())
+                terminated_episodes += int(terminated.sum().item())
+                truncated_episodes += int(truncated.sum().item())
+                timeout_episodes += int(timeout.sum().item())
 
                 # 2.1) get next_value when VectorEnv auto-reset at same step
                 next_value[:] = torch.nan  # optional (helps catch bugs)
@@ -302,7 +348,7 @@ def main(cfg: DictConfig) -> None:
                 for k, v in single_update_metrics.items():
                     metrics_weighted_sum[k] += v * float(mini_batch.batch_size)
                 metrics_count += mini_batch.batch_size
-                kl_sum += single_update_metrics["approx_kl"]
+                kl_sum += single_update_metrics["ppo/approx_kl"]
                 kl_count += 1
             # early-stop by KL
             if (
@@ -332,6 +378,14 @@ def main(cfg: DictConfig) -> None:
             rollout_time=rollout_time,
             ending_time=time.perf_counter(),
             print_sps=True,
+        )
+        log_episode_end_metrics(
+            logger=logger,
+            global_step=global_step,
+            completed_episodes=completed_episodes,
+            terminated_episodes=terminated_episodes,
+            truncated_episodes=truncated_episodes,
+            timeout_episodes=timeout_episodes,
         )
         log_update_metrics(
             logger=logger,

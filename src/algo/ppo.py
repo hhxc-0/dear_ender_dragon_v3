@@ -61,18 +61,18 @@ class PPOLearner:
 
             metrics = {}
             # losses
-            metrics["policy_loss"] = to_scalar(policy_loss)
-            metrics["value_loss"] = to_scalar(value_loss)
-            metrics["entropy"] = to_scalar(entropy_mean)
-            metrics["total_loss"] = to_scalar(loss)
+            metrics["losses/policy_loss"] = to_scalar(policy_loss)
+            metrics["losses/value_loss"] = to_scalar(value_loss)
+            metrics["losses/entropy"] = to_scalar(entropy_mean)
+            metrics["losses/total_loss"] = to_scalar(loss)
             # PPO health
-            metrics["approx_kl"] = to_scalar((mini_batch.logp_old - logp).mean())
-            metrics["clipfrac"] = to_scalar(
+            metrics["ppo/approx_kl"] = to_scalar((mini_batch.logp_old - logp).mean())
+            metrics["ppo/clipfrac"] = to_scalar(
                 ((ratio - 1.0).abs() > self.clip_coef).float().mean()
             )
-            metrics["ratio_mean"] = to_scalar(ratio.mean())
+            metrics["ppo/ratio_mean"] = to_scalar(ratio.mean())
             # value fit
-            metrics["explained_variance"] = to_scalar(
+            metrics["value/explained_variance"] = to_scalar(
                 (
                     1.0
                     - (mini_batch.returns - value).var()
@@ -80,8 +80,8 @@ class PPOLearner:
                 )
             )
             # stability
-            metrics["grad_norm"] = to_scalar(grad_norm)
-            metrics["lr"] = to_scalar(self.optim.param_groups[0]["lr"])
+            metrics["optim/grad_norm"] = to_scalar(grad_norm)
+            metrics["optim/lr"] = to_scalar(self.optim.param_groups[0]["lr"])
             return metrics
 
     def state_dict(self) -> dict:

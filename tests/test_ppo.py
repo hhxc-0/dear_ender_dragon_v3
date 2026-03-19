@@ -69,9 +69,9 @@ def _make_mb(
 
 class TestUpdateReturnContract:
     EXPECTED_KEYS = {
-        "policy_loss", "value_loss", "entropy", "total_loss",
-        "approx_kl", "clipfrac", "ratio_mean",
-        "explained_variance", "grad_norm", "lr",
+        "losses/policy_loss", "losses/value_loss", "losses/entropy", "losses/total_loss",
+        "ppo/approx_kl", "ppo/clipfrac", "ppo/ratio_mean",
+        "value/explained_variance", "optim/grad_norm", "optim/lr",
     }
 
     def test_returns_expected_keys(self, tiny_model, tiny_optim, ppo_cfg):
@@ -102,7 +102,7 @@ class TestPolicyLoss:
         mb = _make_mb(tiny_model, logp_offset=0.0, adv=adv)
         metrics = learner.update(mb)
         # policy_loss = -mean(ratio * adv) ≈ -adv when ratio ≈ 1
-        assert abs(metrics["policy_loss"] - (-adv)) < 0.05
+        assert abs(metrics["losses/policy_loss"] - (-adv)) < 0.05
 
     def test_clipped_regime_positive_adv(self, tiny_model, tiny_optim):
         """When ratio >> 1+clip_coef and adv > 0, clipped objective is used (loss is larger than unclipped)."""
@@ -140,7 +140,7 @@ class TestPolicyLoss:
         mb = _make_mb(tiny_model, logp_offset=-2.0, adv=adv)
         metrics = learner.update(mb)
         # Clipped ratio = 1 - clip_coef = 0.8; policy_loss ≈ -(0.8 * (-1)) = 0.8
-        assert abs(metrics["policy_loss"] - (1 - clip_coef) * (-adv)) < 0.05
+        assert abs(metrics["losses/policy_loss"] - (1 - clip_coef) * (-adv)) < 0.05
 
 
 # ---------------------------------------------------------------------------
@@ -153,7 +153,7 @@ class TestValueLoss:
         learner = PPOLearner(model=tiny_model, optim=tiny_optim, config=ppo_cfg)
         mb = _make_mb(tiny_model)
         metrics = learner.update(mb)
-        assert metrics["value_loss"] >= 0.0
+        assert metrics["losses/value_loss"] >= 0.0
 
     def test_value_loss_unclipped_regime(self, tiny_model, tiny_optim):
         """When value ≈ values_old (value_offset=0), value loss ≈ 0.5 * MSE(value, returns)."""
@@ -165,7 +165,7 @@ class TestValueLoss:
         expected_vl = 0.5 * ((value_pred - mb.returns) ** 2).mean().item()
         metrics = learner.update(mb)
         # Allow some tolerance because the clipped branch may also be active
-        assert abs(metrics["value_loss"] - expected_vl) < 0.5
+        assert abs(metrics["losses/value_loss"] - expected_vl) < 0.5
 
 
 # ---------------------------------------------------------------------------
@@ -178,7 +178,7 @@ class TestEntropyBonus:
         learner = PPOLearner(model=tiny_model, optim=tiny_optim, config=ppo_cfg)
         mb = _make_mb(tiny_model)
         metrics = learner.update(mb)
-        assert metrics["entropy"] >= 0.0
+        assert metrics["losses/entropy"] >= 0.0
 
     def test_entropy_bonus_reduces_total_loss(self, tiny_model, tiny_optim):
         """With ent_coef > 0, total_loss < policy_loss + vf_coef * value_loss."""
@@ -186,8 +186,8 @@ class TestEntropyBonus:
         learner = _make_learner(tiny_model, tiny_optim, ent_coef=ent_coef, vf_coef=vf_coef)
         mb = _make_mb(tiny_model)
         metrics = learner.update(mb)
-        expected_upper = metrics["policy_loss"] + vf_coef * metrics["value_loss"]
-        assert metrics["total_loss"] < expected_upper
+        expected_upper = metrics["losses/policy_loss"] + vf_coef * metrics["losses/value_loss"]
+        assert metrics["losses/total_loss"] < expected_upper
 
 
 # ---------------------------------------------------------------------------
@@ -202,40 +202,40 @@ class TestPPOHealthMetrics:
         # logp_offset = -1.0 → logp = logp_old - 1 → logp_old - logp = 1 > 0
         mb = _make_mb(tiny_model, logp_offset=-1.0)
         metrics = learner.update(mb)
-        assert metrics["approx_kl"] > 0.0
+        assert metrics["ppo/approx_kl"] > 0.0
 
     def test_approx_kl_negative_when_policy_moved_closer(self, tiny_model, tiny_optim, ppo_cfg):
         """logp > logp_old → approx_kl < 0."""
         learner = PPOLearner(model=tiny_model, optim=tiny_optim, config=ppo_cfg)
         mb = _make_mb(tiny_model, logp_offset=1.0)
         metrics = learner.update(mb)
-        assert metrics["approx_kl"] < 0.0
+        assert metrics["ppo/approx_kl"] < 0.0
 
     def test_clipfrac_zero_when_unclipped(self, tiny_model, tiny_optim):
         """ratio ≈ 1 (logp_offset=0) → all ratios within clip range → clipfrac = 0."""
         learner = _make_learner(tiny_model, tiny_optim, clip_coef=0.5)
         mb = _make_mb(tiny_model, logp_offset=0.0)
         metrics = learner.update(mb)
-        assert metrics["clipfrac"] == 0.0
+        assert metrics["ppo/clipfrac"] == 0.0
 
     def test_clipfrac_one_when_all_clipped(self, tiny_model, tiny_optim):
         """ratio = exp(5) >> 1+clip_coef → all clipped → clipfrac = 1."""
         learner = _make_learner(tiny_model, tiny_optim, clip_coef=0.2)
         mb = _make_mb(tiny_model, logp_offset=5.0)
         metrics = learner.update(mb)
-        assert metrics["clipfrac"] == 1.0
+        assert metrics["ppo/clipfrac"] == 1.0
 
     def test_ratio_mean_near_one_when_logp_offset_zero(self, tiny_model, tiny_optim, ppo_cfg):
         learner = PPOLearner(model=tiny_model, optim=tiny_optim, config=ppo_cfg)
         mb = _make_mb(tiny_model, logp_offset=0.0)
         metrics = learner.update(mb)
-        assert abs(metrics["ratio_mean"] - 1.0) < 0.05
+        assert abs(metrics["ppo/ratio_mean"] - 1.0) < 0.05
 
     def test_lr_matches_optimizer(self, tiny_model, tiny_optim, ppo_cfg):
         learner = PPOLearner(model=tiny_model, optim=tiny_optim, config=ppo_cfg)
         mb = _make_mb(tiny_model)
         metrics = learner.update(mb)
-        assert metrics["lr"] == pytest.approx(tiny_optim.param_groups[0]["lr"])
+        assert metrics["optim/lr"] == pytest.approx(tiny_optim.param_groups[0]["lr"])
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +248,7 @@ class TestGradients:
         learner = PPOLearner(model=tiny_model, optim=tiny_optim, config=ppo_cfg)
         mb = _make_mb(tiny_model)
         metrics = learner.update(mb)
-        assert math.isfinite(metrics["grad_norm"])
+        assert math.isfinite(metrics["optim/grad_norm"])
 
     def test_nonfinite_grad_raises(self, tiny_model, tiny_optim, ppo_cfg):
         """Injecting NaN into model weights should trigger the non-finite grad guard."""
