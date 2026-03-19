@@ -55,6 +55,7 @@ def saved_ckpt_path(tmp_path, model, optimizer, dummy_cfg):
         cfg=dummy_cfg,
         model=model,
         optimizer=optimizer,
+        lr_scheduler=None,
         global_step=500,
         update_idx=10,
         save_rng=False,
@@ -77,7 +78,7 @@ class TestSaveLoad:
 
     def test_load_has_required_keys(self, saved_ckpt_path):
         ckpt = load_checkpoint(saved_ckpt_path)
-        required = {"format_version", "cfg", "model", "optimizer", "global_step", "update_idx"}
+        required = {"format_version", "cfg", "model", "optimizer", "lr_scheduler", "global_step", "update_idx"}
         assert required <= ckpt.keys()
 
     def test_load_global_step(self, saved_ckpt_path):
@@ -95,18 +96,18 @@ class TestSaveLoad:
     def test_model_weights_roundtrip(self, tmp_path, model, optimizer, dummy_cfg):
         """Saved model weights should match loaded model weights exactly."""
         original_sd = {k: v.clone() for k, v in model.state_dict().items()}
-        save_checkpoint(tmp_path, "w_test", dummy_cfg, model, optimizer, 0, 0, False)
+        save_checkpoint(tmp_path, "w_test", dummy_cfg, model, optimizer, None, 0, 0, False)
         ckpt = load_checkpoint(tmp_path / "checkpoints" / "w_test.pt")
         for k, v in ckpt["model"].items():
             assert torch.allclose(v, original_sd[k])
 
     def test_default_filename_uses_step(self, tmp_path, model, optimizer, dummy_cfg):
         """When file_name=None, the file should be named step_{global_step}.pt."""
-        save_checkpoint(tmp_path, None, dummy_cfg, model, optimizer, 1234, 0, False)
+        save_checkpoint(tmp_path, None, dummy_cfg, model, optimizer, None, 1234, 0, False)
         assert (tmp_path / "checkpoints" / "step_1234.pt").exists()
 
     def test_save_rng_state_included(self, tmp_path, model, optimizer, dummy_cfg):
-        save_checkpoint(tmp_path, "rng_test", dummy_cfg, model, optimizer, 0, 0, save_rng=True)
+        save_checkpoint(tmp_path, "rng_test", dummy_cfg, model, optimizer, None, 0, 0, save_rng=True)
         ckpt = load_checkpoint(tmp_path / "checkpoints" / "rng_test.pt")
         assert "rng_states" in ckpt
         assert "python_random" in ckpt["rng_states"]
@@ -122,6 +123,7 @@ class TestSaveLoad:
             "format_version": 99,
             "model": {},
             "optimizer": {},
+            "lr_scheduler": None,
             "global_step": 0,
             "update_idx": 0,
             "cfg": {},
@@ -130,7 +132,7 @@ class TestSaveLoad:
         torch.save(bad_ckpt, path)
         ckpt = load_checkpoint(path)
         with pytest.raises(AssertionError):
-            resume_from_checkpoint(ckpt, torch.nn.Linear(1, 1), torch.optim.SGD([torch.zeros(1)], lr=0.01), False)
+            resume_from_checkpoint(ckpt, torch.nn.Linear(1, 1), torch.optim.SGD([torch.zeros(1)], lr=0.01), None, False)
 
 
 # ---------------------------------------------------------------------------
@@ -141,38 +143,38 @@ class TestSaveLoad:
 class TestResume:
     def test_restores_model_weights(self, tmp_path, model, optimizer, dummy_cfg):
         original_sd = {k: v.clone() for k, v in model.state_dict().items()}
-        save_checkpoint(tmp_path, "resume_test", dummy_cfg, model, optimizer, 100, 5, False)
+        save_checkpoint(tmp_path, "resume_test", dummy_cfg, model, optimizer, None, 100, 5, False)
         # Corrupt model weights
         with torch.no_grad():
             for p in model.parameters():
                 p.fill_(0.0)
         ckpt = load_checkpoint(tmp_path / "checkpoints" / "resume_test.pt")
-        resume_from_checkpoint(ckpt, model, optimizer, resume_rng_state=False)
+        resume_from_checkpoint(ckpt, model, optimizer, lr_scheduler=None, resume_rng_state=False)
         for k, v in model.state_dict().items():
             assert torch.allclose(v, original_sd[k])
 
     def test_returns_correct_counters(self, tmp_path, model, optimizer, dummy_cfg):
-        save_checkpoint(tmp_path, "counters_test", dummy_cfg, model, optimizer, 777, 33, False)
+        save_checkpoint(tmp_path, "counters_test", dummy_cfg, model, optimizer, None, 777, 33, False)
         ckpt = load_checkpoint(tmp_path / "checkpoints" / "counters_test.pt")
-        global_step, update_idx = resume_from_checkpoint(ckpt, model, optimizer, False)
+        global_step, update_idx = resume_from_checkpoint(ckpt, model, optimizer, None, False)
         assert global_step == 777
         assert update_idx == 33
 
     def test_missing_keys_raises(self, model, optimizer):
         bad_ckpt = {"format_version": 1, "model": model.state_dict()}
         with pytest.raises(AssertionError):
-            resume_from_checkpoint(bad_ckpt, model, optimizer, False)
+            resume_from_checkpoint(bad_ckpt, model, optimizer, None, False)
 
     def test_resume_rng_state_restores_torch(self, tmp_path, model, optimizer, dummy_cfg):
         """After restoring RNG state, torch.rand should reproduce the same sequence."""
         torch.manual_seed(123)
         ref = torch.rand(5).clone()
         torch.manual_seed(123)  # reset to same state before saving
-        save_checkpoint(tmp_path, "rng_resume", dummy_cfg, model, optimizer, 0, 0, save_rng=True)
+        save_checkpoint(tmp_path, "rng_resume", dummy_cfg, model, optimizer, None, 0, 0, save_rng=True)
         # Advance RNG
         _ = torch.rand(100)
         ckpt = load_checkpoint(tmp_path / "checkpoints" / "rng_resume.pt")
-        resume_from_checkpoint(ckpt, model, optimizer, resume_rng_state=True)
+        resume_from_checkpoint(ckpt, model, optimizer, lr_scheduler=None, resume_rng_state=True)
         restored = torch.rand(5)
         assert torch.allclose(ref, restored)
 
@@ -181,11 +183,12 @@ class TestResume:
             "format_version": 1,
             "model": model.state_dict(),
             "optimizer": optimizer.state_dict(),
+            "lr_scheduler": None,
             "global_step": 0,
             "update_idx": 0,
         }
         with pytest.raises(AssertionError):
-            resume_from_checkpoint(ckpt, model, optimizer, resume_rng_state=True)
+            resume_from_checkpoint(ckpt, model, optimizer, lr_scheduler=None, resume_rng_state=True)
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +199,7 @@ class TestResume:
 class TestInitFromCheckpoint:
     def test_loads_model_weights(self, tmp_path, model, optimizer, dummy_cfg):
         original_sd = {k: v.clone() for k, v in model.state_dict().items()}
-        save_checkpoint(tmp_path, "init_test", dummy_cfg, model, optimizer, 0, 0, False)
+        save_checkpoint(tmp_path, "init_test", dummy_cfg, model, optimizer, None, 0, 0, False)
         # Corrupt model
         with torch.no_grad():
             for p in model.parameters():
@@ -216,7 +219,7 @@ class TestInitFromCheckpoint:
         optimizer.step()
         optim_sd_before = {k: v for k, v in optimizer.state_dict().items()}
 
-        save_checkpoint(tmp_path, "init_optim_test", dummy_cfg, model, optimizer, 0, 0, False)
+        save_checkpoint(tmp_path, "init_optim_test", dummy_cfg, model, optimizer, None, 0, 0, False)
         ckpt = load_checkpoint(tmp_path / "checkpoints" / "init_optim_test.pt")
 
         # Create a fresh optimizer (no state)

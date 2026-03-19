@@ -130,11 +130,22 @@ def main(cfg: DictConfig) -> None:
     ).to(device)
     if cfg.optim.name == "adam":
         optimizer = torch.optim.Adam(
-            model.parameters(), lr=cfg.optim.lr, eps=cfg.optim.eps
+            params=model.parameters(), lr=cfg.optim.lr, eps=cfg.optim.eps
         )
     else:
         raise NotImplementedError("Unknown optimizer")
     learner = make_learner(cfg=cfg, model=model, optim=optimizer)
+    if not cfg.lr_scheduler.name:
+        lr_scheduler = None
+    elif cfg.lr_scheduler.name == "linear":
+        lr_scheduler = torch.optim.lr_scheduler.LinearLR(
+            optimizer=optimizer,
+            start_factor=cfg.lr_scheduler.start_factor,
+            end_factor=cfg.lr_scheduler.end_factor,
+            total_iters=num_updates,
+        )
+    else:
+        raise NotImplementedError("Unknown LR scheduler")
 
     # --- resume (optional) ---
     global_step = 0
@@ -148,6 +159,7 @@ def main(cfg: DictConfig) -> None:
                 checkpoint_dict=ckpt,
                 model=model,
                 optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
                 resume_rng_state=cfg.runtime.resume.resume_rng_state,
             )
             next_checkpoint_step = (
@@ -305,6 +317,10 @@ def main(cfg: DictConfig) -> None:
         }
         update_idx += 1
 
+        # --- step LR scheduler
+        if lr_scheduler:
+            lr_scheduler.step()
+
         # --- log update metrics ---
         if device.type == "cuda":
             torch.cuda.synchronize()
@@ -333,6 +349,7 @@ def main(cfg: DictConfig) -> None:
                 cfg=cfg,
                 model=model,
                 optimizer=optimizer,
+                lr_scheduler=lr_scheduler,
                 global_step=global_step,
                 update_idx=update_idx,
                 save_rng=cfg.checkpoint.save_rng_state,
@@ -347,6 +364,7 @@ def main(cfg: DictConfig) -> None:
             cfg=cfg,
             model=model,
             optimizer=optimizer,
+            lr_scheduler=lr_scheduler,
             global_step=global_step,
             update_idx=update_idx,
             save_rng=cfg.checkpoint.save_rng_state,

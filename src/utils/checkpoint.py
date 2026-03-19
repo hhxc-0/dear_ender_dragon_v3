@@ -16,6 +16,7 @@ def save_checkpoint(
     cfg: DictConfig,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
+    lr_scheduler: Optional[torch.optim.lr_scheduler.LRScheduler],
     global_step: int,
     update_idx: int,
     save_rng: bool,
@@ -30,6 +31,14 @@ def save_checkpoint(
         "cfg": OmegaConf.to_container(cfg, resolve=True),
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict(),
+        "lr_scheduler": (
+            {
+                "class_name": lr_scheduler.__class__.__name__,
+                "state_dict": lr_scheduler.state_dict(),
+            }
+            if lr_scheduler is not None
+            else None
+        ),
         "global_step": global_step,
         "update_idx": update_idx,
     }
@@ -62,6 +71,7 @@ def resume_from_checkpoint(
     checkpoint_dict: dict,
     model: torch.nn.Module,
     optimizer: torch.optim.Optimizer,
+    lr_scheduler: Optional[torch.optim.lr_scheduler.LRScheduler],
     resume_rng_state: bool,
 ) -> Tuple[int, int]:
     """Restore states, returns (global_step, update_idx). Overrides optimizer LR. Will not restore run_dir."""
@@ -80,13 +90,37 @@ def resume_from_checkpoint(
                     state[k] = v.to(device=device)
 
     assert (
-        set(("format_version", "model", "optimizer", "global_step", "update_idx"))
+        set(
+            (
+                "format_version",
+                "model",
+                "optimizer",
+                "lr_scheduler",
+                "global_step",
+                "update_idx",
+            )
+        )
         <= checkpoint_dict.keys()
     ), "Keys missing in the checkpoint dictionary."
     assert checkpoint_dict["format_version"] == 1, "Unknown format version."
     model.load_state_dict(checkpoint_dict["model"])
     optimizer.load_state_dict(checkpoint_dict["optimizer"])
     optimizer_to_device(optimizer=optimizer)
+    if checkpoint_dict["lr_scheduler"] is not None:
+        assert isinstance(checkpoint_dict["lr_scheduler"], dict)
+        assert (
+            "class_name" in checkpoint_dict["lr_scheduler"]
+            and "state_dict" in checkpoint_dict["lr_scheduler"]
+        ), "Keys missing in the lr_scheduler dictionary."
+        assert lr_scheduler is not None, "Expect a LR scheduler, but it doesn't exist"
+        # assert lr_scheduler., "Expect a LR scheduler, but it doesn't exist"
+        assert (
+            lr_scheduler.__class__.__name__
+            == checkpoint_dict["lr_scheduler"]["class_name"]
+        ), "Saved class name of LR scheduler mismatch with the class of the LR scheduler provided"
+        lr_scheduler.load_state_dict(checkpoint_dict["lr_scheduler"]["state_dict"])
+    else:
+        assert lr_scheduler is None, "Expect no LR scheduler, but one is existing"
     if resume_rng_state:
         assert (
             "rng_states" in checkpoint_dict.keys()
